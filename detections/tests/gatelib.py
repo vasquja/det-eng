@@ -1373,10 +1373,16 @@ def class_weights(path=CLASS_SECONDS):
     return doc["seconds"]
 
 
+def _default_weight(weights):
+    """The weight of a class that `weights` does not hold: the median of `weights`, or 1
+    when it is empty."""
+    return statistics.median(weights.values()) if weights else 1
+
+
 def _weights_of(names, weights):
     """{name: weight} for each of `names`: its seconds in `weights`, or the median of
     `weights` for a name that `weights` does not hold (1 when it is empty)."""
-    default = statistics.median(weights.values()) if weights else 1
+    default = _default_weight(weights)
     return {name: weights.get(name, default) for name in names}
 
 
@@ -1407,6 +1413,24 @@ def _shard(text):
             f"{text!r}: give K/N, two whole numbers with 1 <= K <= N (2/3: the second of "
             "three shards)")
     return int(found.group(1)), int(found.group(2))
+
+
+def gap_shards(gap_classes, parts):
+    """{gap id: the set of the numbers (1 to N) of the shards that count the known
+    gap}: each shard that holds a class that collects the test of the gap. The test
+    of the gap runs in each of these shards. `gap_classes` is that of _discover(),
+    `parts` the shards of shard_classes(). A gap whose test no class collects is not
+    in the result: no shard runs its test (run_suite() fails each run for it)."""
+    home = {name: number for number, names in enumerate(parts, 1) for name in names}
+    return {gap_id: {home[name] for name in names} for gap_id, names in gap_classes.items()}
+
+
+# Why _discover() gives a known gap no class that collects its test. run_suite() and
+# test_suite.GateTestShards give this text.
+NOT_COLLECTED_CAUSES = (
+    "The likely causes: the marked method is not a method `test_...` of a TestCase; a "
+    "decorator above @gatelib.known_gap does not use functools.wraps; a class overrides "
+    "the marked test without the marker")
 
 
 def _other_shards(parts, shards):
@@ -1444,26 +1468,30 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
     Sets the state of each known gap that a test saw open in this run. Returns 0
     only when every class ran all of its tests and none failed, and, for a run of
     the whole suite or of a shard, when the test of every known gap of that run
-    ran. The classes that collect the test of a gap are those of _discover(): a
-    test on a mixin is collected by each TestCase that inherits it. The known gaps
-    of a shard are those whose test a class of the shard collects, and those whose
-    test no class of the suite collects (each shard fails for them, as the run of
-    the whole suite does). A gap whose test only the classes of other shards
-    collect is `in shard J/N`, and does not fail the shard.
+    ran and a class of the suite collects the test of each known gap. The classes
+    that collect the test of a gap are those of _discover(): a test on a mixin is
+    collected by each TestCase that inherits it. The known gaps of a shard are
+    those whose test a class of the shard collects (gap_shards(): the test runs in
+    each shard that holds such a class), and those whose test no class of the suite
+    collects. A gap whose test only the classes of other shards collect is `in
+    shard J/N`, and does not fail the shard. A gap whose test no class collects
+    fails each run of the whole suite and each run of a shard, also when its test
+    ran and saw the gap open (NOT_COLLECTED_CAUSES gives the likely causes): the
+    runner cannot tell which shard runs such a test.
     """
     gap_classes = {}
     found = _discover(gap_classes)
     classes = collections.OrderedDict(
         (name, count) for name, count in found.items()
         if not only or any(word in name for word in only))
-    home, start_order = {}, list(classes)
+    counted, start_order = {}, list(classes)
     if shard:
         if only:
             raise ValueError("run_suite: give `shard` or `only`, not both")
         number, shards = shard
         weights = class_weights() if weights is None else weights
         parts = shard_classes(list(found), weights, shards)
-        home = {name: part for part, names in enumerate(parts, 1) for name in names}
+        counted = gap_shards(gap_classes, parts)
         classes = collections.OrderedDict((name, found[name]) for name in parts[number - 1])
         if not classes:
             empty = (f"shard {number}/{shards} holds no test class: the suite has "
@@ -1554,11 +1582,19 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
     notes = []
     if shard:
         # The seconds of the classes of the shard in this run beside those of the
-        # table: when they drift apart, update the table (README.md, "CI").
+        # table: when they drift apart, update the table (README.md, "CI"). A class
+        # that the table does not hold weighs the default (_weights_of()), and the
+        # line says how many such classes there are.
+        missing = [name for name in classes if name not in weights]
+        table = f"{sum(weight.values()):.1f} by {os.path.basename(CLASS_SECONDS)}"
+        if missing:
+            table += (f" ({len(missing)} class(es) not in it, at the median "
+                      f"{_default_weight(weights):.1f} s)" if weights else
+                      f" ({len(missing)} class(es) not in it, at {_default_weight(weights):.1f} "
+                      "s, as the table is empty)")
         counts = (f"shard {number}/{shards}: {len(classes)} of {len(found)} test class(es), "
                   f"{total} test(s), {jobs} at a time, {time.monotonic() - start:.1f} s; the "
-                  f"seconds of its classes: {spent:.1f} in this run, "
-                  f"{sum(weight.values()):.1f} in {os.path.basename(CLASS_SECONDS)}")
+                  f"seconds of its classes: {spent:.1f} in this run, {table}")
         notes.append(f"classes of shard {number}/{shards}: {', '.join(classes)}")
     if skips:
         notes.append(f"{sum(skips.values())} test(s) skipped: "
@@ -1569,23 +1605,31 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
         notes.append("FAILED: --no-skips is set, and test(s) were skipped (the lines "
                      "`skipped '...'` above give the reasons)")
     # A run of the whole suite in which no class failed must see every known gap
-    # open. A gap whose test did not run is not tested at all: its marker is on a
-    # method that unittest does not collect, or in a class that is no TestCase. (A
-    # test that was skipped is counted above: a class that collects it is in
-    # `skips`.) A run of a shard counts the gaps whose test a class of the shard
-    # collects, and those whose test no class of the suite collects: no shard runs
-    # these, so each shard fails, as the run of the whole suite does.
+    # open. A gap whose test did not run is not tested at all. (A test that was
+    # skipped is counted above: a class that collects it is in `skips`.) A run of a
+    # shard counts the gaps whose test a class of the shard collects (gap_shards()),
+    # and those whose test no class of the suite collects.
     if shard:
         for gap in KNOWN_GAPS.values():
-            parts = {home[name] for name in gap_classes.get(gap.id, ())}
-            if parts and number not in parts:
-                gap.state = _other_shards(parts, shards)
+            numbers = counted.get(gap.id)
+            if numbers and number not in numbers:
+                gap.state = _other_shards(numbers, shards)
     not_run = [] if only or failed else sorted(
         gap.id for gap in KNOWN_GAPS.values()
         if gap.state == "not run" and not gap_classes.get(gap.id, set()) & skips.keys())
     if not_run:
         notes.append("FAILED: the test of these known gap(s) did not run: " + ", ".join(not_run))
-    code = 1 if failed or not_run or (skips and no_skips) else 0
+    # A gap whose test no class collects fails each run of the whole suite and of a
+    # shard, also when its test ran (and saw the gap open, or failed): the marked
+    # method is not a test that unittest collects with its marker, so a run of a
+    # shard cannot tell which shard runs it, and the list of the gaps cannot trust
+    # its state.
+    not_collected = [] if only else sorted(
+        gap.id for gap in KNOWN_GAPS.values() if gap.id not in gap_classes)
+    if not_collected:
+        notes.append("FAILED: no test class collects the marked test of these known gap(s): "
+                     f"{', '.join(not_collected)}. {NOT_COLLECTED_CAUSES}.")
+    code = 1 if failed or not_run or not_collected or (skips and no_skips) else 0
     print("\n" + "\n".join([counts] + notes + (["OK"] if code == 0 else [])), file=out)
     if summary:
         still_open = sum(1 for gap in KNOWN_GAPS.values() if gap.state == "open")
