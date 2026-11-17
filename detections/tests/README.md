@@ -31,8 +31,8 @@ process for each test class, as many at a time as the machine has CPUs. Then it
 prints the known gaps. On a GitHub runner (four CPUs) it took six to eight minutes
 on 2026-11-17 (347 and 460 s), so CI runs it in three shards (`--shard`, below)
 on three runners. On a development machine with four CPUs the whole run took
-380 s, and the three shards 130, 162 and 80 s. The tests in sequence take much
-longer. It fails:
+339 s, and the three shards 143, 113 and 111 s (with the split by wall seconds:
+130, 162 and 80 s). The tests in sequence take much longer. It fails:
 
 - when a class fails;
 - when a class did not run all of its tests;
@@ -52,7 +52,7 @@ adds the result and the known gaps to a file as Markdown. CI uses both.
 
 `--shard K/N` runs only the classes of shard K of N (1 <= K <= N); CI runs
 the three shards of `--shard K/3` on three runners. The shards split the classes
-by their seconds on a GitHub runner, from the table `class_seconds.json`: from
+by their CPU seconds, from the table `class_seconds.json` (CI, below): from
 the heaviest class to the lightest (two of the same weight in the order of their
 names), each class goes to the shard with the least weight so far (of two such
 shards, the one with the lower number). A class that the table does not hold
@@ -60,23 +60,35 @@ weighs the median of the table. Each class is in one shard, so the runs of
 `--shard 1/N` to `--shard N/N` run each class one time. A run of a shard starts
 its classes heaviest first, prints them in the order of discovery, and names the
 shard and its classes in its last lines and in the summary. Its summary line
-also gives the seconds of its classes in this run and by the table (`Y by
-class_seconds.json`, and `(K class(es) not in it, at the median N.N s)` when the
-table does not hold K of them), so that a table that is out of date shows in each
-leg. For the known gaps, it counts the gaps whose test a class of the shard
-collects (a test that a class inherits from a mixin or from another TestCase is
-collected by that class; the test of a gap runs in each shard that holds a class
-that collects it), and the gaps whose test no class of the suite collects (each
-shard fails for these, as a run of the whole suite does). A gap whose test only
-the classes of other shards collect is `in shard J/N` (or `in shards J/N and
-L/N`), and does not fail the shard. A value that is not of the
-form K/N, class names beside `--shard`, a shard that holds no class and a table
-that cannot be used (a number that is not above 0, a key two times) fail the
-run; the summary then says why.
+gives the wall time of the run (`J at a time, W s`) and then the CPU seconds of
+its classes in this run and by the table:
+`the CPU seconds of its classes: X in this run, Y by class_seconds.json`.
+X is the sum of the CPU seconds of the lines of its classes. When K of its
+classes have no CPU time (`CPU not known`), `(K class(es) without a CPU time)`
+follows X. When the table does not hold K of its classes,
+`(K class(es) not in it, at the median N.N s)` follows Y. Thus a table that is
+out of date shows in each leg. For the known gaps, it counts the gaps whose test
+a class of the shard collects (a test that a class inherits from a mixin or from
+another TestCase is collected by that class; the test of a gap runs in each
+shard that holds a class that collects it), and the gaps whose test no class of
+the suite collects (each shard fails for these, as a run of the whole suite
+does). A gap whose test only the classes of other shards collect is
+`in shard J/N` (or `in shards J/N and L/N`), and does not fail the shard. A value
+that is not of the form K/N, class names beside `--shard`, a shard that holds no
+class and a table that cannot be used (a number that is not above 0, a key two
+times) fail the run; the summary then says why.
 
 The runner takes the counts of a class (tests that ran, tests that were skipped)
 from the `TestResult` of the class. It reads no line of the text that `unittest`
 prints, because the format of that text differs between Python versions.
+
+The line of each class is
+`===== module.Class: <verdict>, N test(s), S s (CPU C s)`,
+with `(K skipped)` after `test(s)` when K tests were skipped. S is the wall time
+of the class. C is its CPU time: the user and system time of the class process
+and of each process that it waited for (the gates that its tests ran). The
+process of the class writes C beside its counts. A class that was stopped, or
+whose process died, wrote no counts: its line ends with `(CPU not known)`.
 
 `-B` stops Python from writing `__pycache__/` beside the tests. The suite uses
 only the standard library (`unittest`), PyYAML and pySigma. It needs no network
@@ -122,8 +134,8 @@ after each test or test class.
 | Path | Content |
 |------|---------|
 | `gatelib.py` | The harness: `Tree`, `GateCase`, `StartedTogether`, `assert_rejects`, `assert_accepts`, `assert_saw`, `known_gap`, `ci_step`, `ci_commands`, and the parallel runner with its shards (`--shard K/N`, `shard_classes()`). |
-| `class_seconds.json` | The seconds of each test class on a GitHub runner: the weights of the shards (CI, below). |
-| `test_gatelib.py` | Tests of the harness, on constructed gates (also `--shard` on a constructed suite and table: each shard runs exactly its classes, heaviest first, and gives the seconds of its classes in the run (more than the line of any one class) and by the table, with the number of its classes that the table does not hold; the known gaps of other shards do not fail it; a gap on a mixin counts in each shard of a class that inherits it; a gap whose test no class collects fails each shard and the whole run, also when its test ran (a decorator without `functools.wraps`, an override without the marker); a skipped class that does not collect a gap does not excuse it; wrong values of `--shard`, a shard with no class and a table that cannot be used fail the run). |
+| `class_seconds.json` | The CPU seconds of each test class: the weights of the shards (CI, below). |
+| `test_gatelib.py` | Tests of the harness, on constructed gates (also `--shard` on a constructed suite and table: each shard runs exactly its classes, heaviest first, and gives the CPU seconds of its classes in the run (the sum of the CPU of their lines, also when they run at the same time; the CPU of a class holds that of the processes that it waited for) and by the table, with the number of its classes that have no CPU time and of those that the table does not hold; the known gaps of other shards do not fail it; a gap on a mixin counts in each shard of a class that inherits it; a gap whose test no class collects fails each shard and the whole run, also when its test ran (a decorator without `functools.wraps`, an override without the marker); a skipped class that does not collect a gap does not excuse it; wrong values of `--shard`, a shard with no class and a table that cannot be used fail the run). |
 | `test_sufficiency.py` | `rule_cases.py` (and through it the event table of `sigma_eval.py`: a sidecar line that is not a case, is not UTF-8 (also a lone byte 0x80) or holds JSON that the gate cannot read (too deep for `json` or for `flatten()`, a number with too many digits), a case whose name, `why` or atom of `breaks` holds a lone surrogate (also in `check_provider_mappings.py`), a sidecar line with an object that holds one key two times (a key of an event, which names the case; the kind or the name of the case object, which names only the line), a case whose events one event table cannot hold (also two keys that give one field, in each order, `NaN`, `Infinity`, a lone surrogate in a value or a key, a NUL in a key), a case whose two events hold keys that differ only in letter case, a correlation case whose second event spells the key of the time or of the group-by in another letter case (a near-miss on the timespan, a near-miss on group-by, a positive), a rule in a dotfile), the event table of `sigma_eval.py` itself (class `EventTableKeys`: keys of two events that differ only in letter case share one column, the values of two events with the same keys in two orders go in the columns of their keys, one event with such keys is refused with the event and the keys, an event whose two keys give one field is refused with the event and the field, letters that are not ASCII are not folded, the names `_rowid` and `rowid` in any letter case, integers outside 64 bits, `NaN`, `-Infinity`, a lone surrogate in a value or a key and a NUL in a key are refused, `oid`, `_rowid_` and `event_ids` are ordinary keys), the import guard of `sigma_eval.py` (each kind of name that it and R0 refuse, compared; each gate that reads the rules stops at it on a rule in a dotfile; the rule lists of the walkers that do not use the globs), `check_sufficiency.py` (R0 to R4 and the waiver digests; also a sidecar line that is not UTF-8), the sufficiency ratchet (also a hard benign fixture that lost its verified negatives), the self-test of `sigma_explain.py` (also the counted field of a `value_count` and a group-by field spelled in another letter case, which the analysis reads as SQLite does, and a group-by key with the Kelvin sign, which is another column). |
 | `test_mutants.py` | `check_mutants.py`, the change proof of the `sufficiency-ratchet` job. One planted change in the head that no case, fixture or corpus record of the head tells apart from its undo, each rejected with its key: a dead item, a list value that no positive needs, an allowlist name in a base rule of a correlation, an allowlist name widened in place, a list of verbs made a wildcard, the names of an identity filter made a wildcard, one more alternative inside a `\|re` value, an allowlist rewritten as one `\|re` value, a new OR branch that `1 of sel_pod_*` reaches, a dead item beside a value that makes the head fire on its own near-miss and on corpus records (evidence that the head fails does not kill, and a corpus slice that loses a hit does not kill), a dead block under an `and` beside a proven filter, a removed value with no negative, a wider timespan of a correlation, and a value in a correlation base rule with a new name and id. The changes that the gate passes: an allowlist name with its filtered case, a list that is only reordered, reworded texts, a blank fix that only the variant `compact` proves, an anchored value that only `multi` proves and a letter-case fix that only `cs_like` proves (all three planted in the base), a removed value and an added `and` block, each with its negative, a condition with its terms in another order (equivalent), a new id, and a new rule (report only). The changes that go to a human (a renamed block, a switch between a plain rule and a correlation, an undo that does not compile), the structural faults (exit 2: also a variant that is not in force and a sidecar error), and the step of the job. |
 | `test_quality.py` | `score_benign.py` (also a slice whose spec, or a line of the data of a recorded slice, holds an object with one key two times: an ERROR line names the file (and the line), and no rule is scored; a slice whose event holds two keys that give one field: an ERROR line names the slice, the event and the field, and no rule is scored; a slice whose event holds two keys that differ only in letter case: an ERROR line names the slice, the event and the keys, and no rule is scored, also for a slice that no rule reads and with `--update`; so does a reseed (`--reseeds`) whose event holds such keys; two events of a slice with such keys are scored; and a live capture, `--extra-slice`, that is a directory or does not exist, holds a byte that is not UTF-8, starts with a byte order mark (also at line 2), or holds a line that is JSON and not an object, an event with two keys that differ only in letter case (also in a nested object), an event that holds one key two times (a line, and an element of an array), an event whose two keys give one field, or JSON that the gate cannot read (in a line or in one document), or a line that json refuses and that a capture cannot have cut (NUL bytes before an event, also on the last line without a line feed; a cut line before other lines, and as the last line with a line feed; on the last line without a line end, an event and the start of an event, U+200B after the brace, a carriage return alone at the end, and a byte that is not UTF-8 before or at the end; a word or a number before a blank at the end; the start of a character of UTF-8 at the end of a middle line; one JSON document, an array on one line or an object of many lines, before a cut last line, with a cut on an ASCII byte and inside a character, which give the same text; a last line too deep for json and cut inside a character): an ERROR line names the capture and the line (the character of the error counts the blanks before the line, and the error of a document of many lines names its line), and no rule is scored on it; two events with such keys are scored, and so is a line that holds U+2028, U+2029 and U+0085 in a string, and the events before a cut last line without a line feed (also a cut inside an escape, after a blank, after U+00A0, and inside a character of UTF-8)) and the benign ratchet, `check_null_safety.py` (also a case whose one record carries a field of the rule in another letter case beside a record that holds the field, and a correlation case whose group-by key, time or counted field is in another letter case; the time has its own text, because the rule writes no time field; a case of a correlation whose first or last base reads `timestamp` as an item field gets the text of a field of the rule; a case whose two records spell a field in two other ways names both spellings), `check_variants.py` (also a sidecar line that is not JSON, and a list of a fixture with an integer outside 64 bits, named with its record), `check_provider_mappings.py` (also a sidecar case that one event table cannot hold, with `--check` and `--write`, and an anchor with an object that holds one key two times), `k8s_policy_coverage.py`, `k8s_platforms_md.py`, `coverage_report.py` (also an entry of the defect tracker without its Summary row or its section, or with two of either, and a heading that starts with an ID and is not the heading of an entry, with `--check` and the generator; one error line for each such entry). |
@@ -253,10 +265,11 @@ class RuleCases(gatelib.GateCase):
 - **Never weaken a test to get green.** When a gate does not reject an artifact
   that it should reject, the case is a known gap.
 - **Stay fast.** Each shard of CI must run in less than four minutes on a CI
-  runner (predicted from the seconds of the classes on 2026-11-17: less than three
-  and a half). No class can be in two shards, so the heaviest class
-  (`test_quality.ScoreBenign`, two to three minutes) is the least time of its
-  shard: keep each class well below that.
+  runner (with the split by wall seconds the legs took 225, 239 and 110 s on
+  2026-11-17; the legs with the split by CPU seconds are still to be measured).
+  No class can be in two shards, so the slowest class
+  (`test_quality.ScoreBenign`, two to four minutes on a runner) is the least time
+  of its shard: keep each class well below that.
   Give each gate its own test class: `gatelib.py --run` runs the classes at the
   same time. For a gate that needs several seconds for one run, start the runs
   of the class together (see below).
@@ -421,28 +434,41 @@ matrix of three legs (`shard: [1, 2, 3]`, `fail-fast: false`). Each leg runs one
 shard of the classes (`--shard K/3`, in Run above) on a runner of its own, and its
 check is `gate-tests (shard K/3)`. A leg that fails does not cancel the others.
 On one runner the test step took 347 and 460 s, in the gate-tests jobs
-133860083834 and 133864147205 of 2026-11-17 (measured). From the per-class times
-of those two runs, the three shards would take 135, 128 and 106 s (the faster
-run) and 190, 161 and 148 s (the slower run), and two shards up to 218 s. These
-leg times are predicted, not measured on GitHub. Each shard starts its heaviest
-class first, so the heaviest class of the suite (`test_quality.ScoreBenign`, 135
-and 190 s in those runs) would set the time of its shard, and more shards would
-not make the job faster.
+133860083834 and 133864147205 of 2026-11-17 (measured). The first table held the
+wall seconds of each class in those two runs. With that split, the three legs of
+run 44187275891 (2026-11-17) took 225, 239 and 110 s (measured). Wall seconds are
+not a good weight, for two reasons. First, several heavy classes use two to 3.4
+CPUs: alone on a machine with four CPUs, `test_validators.CloudValidator` used
+248 s of CPU in 99 s, and `test_quality.ScoreBenign` 183 s in 80 s. Second, a
+class takes longer when heavy classes run beside it: in legs 1 and 2 the classes
+took about 1.75 times their seconds in the table, in leg 3 about 0.8 times. By
+the CPU seconds of each class alone, the classes of the three legs needed 452,
+533 and 286 s of CPU. Thus the table now holds CPU seconds, and the split by CPU
+seconds gives each shard 424 s of CPU. The leg times with this split are still to
+be measured. Each shard starts its heaviest class first. The slowest class is
+the least time of its shard: `test_quality.ScoreBenign` took 224 s in leg 1, and
+80 s alone on a machine with four CPUs.
 `test_suite.py` pins the command, the matrix and the name of the job with the
 same number of shards (`GateTestsJob`), and proves on the real suite that the
 shards hold each class one time, that a class collects the test of each known
 gap, and that the test of a gap runs in each shard that holds a class that
 collects it (`GateTestShards`).
 
-The table `class_seconds.json` holds the seconds of each class on a GitHub
-runner: the mean of two runs of the job of 2026-11-17, from the line
-`===== module.Class: ok, N test(s), S s` of each class in their logs. When a
-class is renamed or removed, its entry must go too (`GateTestShards` fails on an
-entry that names no class). A new class weighs the median of the table until you
-add it with its seconds from the log of its first run in CI. Update the table
-when the legs drift apart (a leg that takes much longer than the others, or a
-summary line whose seconds of the classes in the run and by the table differ
-much): take the seconds of each class from the logs of the three legs of one run.
+The table `class_seconds.json` holds the CPU seconds of each class: the user and
+system time of the class process and of the processes that it waits for. For now
+the numbers come from a run of each class alone on a Linux machine with four
+CPUs on 2026-11-17, not from CI: the CPU seconds of the command
+`gatelib.py --run --no-skips --jobs 1 <class>` and of its child processes. To
+update the table, take the CPU seconds `C` of the line of each class
+(`===== module.Class: ok, N test(s), S s (CPU C s)`) from the logs of the three
+legs of one CI run. When a class is renamed or removed, its entry must go too
+(`GateTestShards` fails on an entry that names no class). A new class weighs the
+median of the table until you add it with its CPU seconds from the log of its
+first run in CI. Update the table when the legs drift apart: a leg that takes
+much longer than the others, or a summary line whose CPU seconds of the classes
+in the run and by the table differ much. CPU seconds do not count the time that
+a class waits for a CPU, so they change less than wall seconds when heavy classes
+run together, and the two numbers stay comparable.
 
 The runner stops a test class after ten minutes (`gatelib.CLASS_TIMEOUT`). Each
 leg has 20 minutes. Thus a class that hangs fails the run, the log holds the
@@ -773,10 +799,10 @@ it does not see one test in the place of a different one.
   content is wrong. The repair is a change to the test, and a test module is not
   content for the merge policy (no `.py` file is): the maintainer merges the
   repair by hand. `gate-tests` is not a required check and is one of the slower
-  checks (each of its legs would take about two to three minutes, a prediction),
-  so GitHub can merge a content-only pull request before the job fails. The job
-  is then red on `main` until the repair. Thus, before you change one of these
-  files, run the suite.
+  checks (its legs took 110 to 239 s in one run of 2026-11-17, with the split by
+  wall seconds), so GitHub can merge a content-only pull request before the job
+  fails. The job is then red on `main` until the repair. Thus, before you change
+  one of these files, run the suite.
 
   A test changes these files in its copy:
 

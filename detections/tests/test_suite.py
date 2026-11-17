@@ -192,10 +192,11 @@ class GateTestsJob(gatelib.GateCase):
         the classes after the one that hangs, and no job summary. So the runner's
         timeout for one class (the step gives no --class-timeout, so it is
         gatelib.CLASS_TIMEOUT) must end first, with time left for the other classes
-        (a shard must run in less than four minutes on a GitHub runner; from the
-        seconds of the classes in two runs of 2026-11-17, each shard would take less
-        than three and a half: a prediction, not a measured leg) and one minute for
-        the steps before the tests. Each leg of the matrix has this timeout."""
+        (a shard must run in less than four minutes on a GitHub runner; with the
+        split by wall seconds, the legs of run 44187275891 took 225, 239 and 110 s;
+        the legs with the split by CPU seconds are still to be measured) and one
+        minute for the steps before the tests. Each leg of the matrix has this
+        timeout."""
         job_seconds = self.workflow()["jobs"]["gate-tests"]["timeout-minutes"] * 60
         self.assertNotIn("--class-timeout", gatelib.ci_commands(self.COMMAND)[0])
         self.assertGreaterEqual(job_seconds - gatelib.CLASS_TIMEOUT, 300,
