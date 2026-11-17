@@ -1077,8 +1077,8 @@ python3 -B detections/tests/gatelib.py --run --shard 2/3     # one shard of thre
 
 The `gate-tests` job of `.github/workflows/detection-quality.yml` runs this command
 on every pull request, as three legs on three runners: each leg runs one shard
-(`--shard K/3`), and each test class is in one shard. When a change adds a check to a gate, add a planted
-artifact that the new check must reject. [`tests/README.md`](tests/README.md)
+(`--shard K/3`), and each test class is in one shard. When a change adds a check
+to a gate, add a planted artifact that the new check must reject. [`tests/README.md`](tests/README.md)
 tells you how to write a case. It also gives the rule for a known gap: the gap is
 closed by a change to the gate, and never by deleting its case.
 
