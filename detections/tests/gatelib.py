@@ -94,8 +94,9 @@ RECURSION_ERROR = r"\(RecursionError: [^()]*(?:\([^()]*\)[^()]*)*\)"
 # runner, not GitHub, ends a class that hangs, so the log still holds the output of
 # every class and the job summary is written.
 CLASS_TIMEOUT = 600
-# The table of class weights for `gatelib.py --run --shard K/N`: the seconds of each
-# test class on a GitHub runner (class_weights(), shard_classes()).
+# The table of class weights for `gatelib.py --run --shard K/N`: the CPU seconds of
+# each test class, that is the user and system time of the class process and of the
+# processes that it waits for (class_weights(), shard_classes()).
 CLASS_SECONDS = os.path.join(TESTS, "class_seconds.json")
 
 # Parts of the repository for Tree(parts) and GateCase.PARTS. A part is a path
@@ -1297,14 +1298,30 @@ class StartedTogether(GateCase):
 # call that `python -m unittest -v <class>` makes, and then the counts of its
 # TestResult as JSON in a file (argument 2). The runner takes the counts from that
 # file. It reads no line of the text that unittest prints: that text is for the log,
-# and its format differs between Python versions.
+# and its format differs between Python versions. Beside the counts, the file holds
+# the CPU seconds of the class (`cpu`): the user and system time of the class
+# process (RUSAGE_SELF) and of each process that it waited for (RUSAGE_CHILDREN:
+# the gates that its tests ran, and the processes that they waited for).
 _ONE_CLASS = (
-    "import json, sys, unittest\n"
+    "import json, resource, sys, unittest\n"
     "result = unittest.main(module=None, argv=['unittest', '-v', sys.argv[1]],\n"
     "                       exit=False).result\n"
+    "cpu = sum(usage.ru_utime + usage.ru_stime for usage in (\n"
+    "    resource.getrusage(resource.RUSAGE_SELF),\n"
+    "    resource.getrusage(resource.RUSAGE_CHILDREN)))\n"
     "with open(sys.argv[2], 'w', encoding='utf-8') as fh:\n"
-    "    json.dump({'ran': result.testsRun, 'skipped': len(result.skipped)}, fh)\n"
+    "    json.dump({'ran': result.testsRun, 'skipped': len(result.skipped), 'cpu': cpu}, fh)\n"
     "sys.exit(0 if result.wasSuccessful() else 1)\n")
+
+
+def _cpu_seconds(counts):
+    """The CPU seconds of a class from its counts file (_ONE_CLASS, read as JSON), or
+    None when they are not known: no counts (the class was stopped, or its process
+    died), no value `cpu`, or a value that is not a finite number >= 0."""
+    value = counts.get("cpu") if isinstance(counts, dict) else None
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        return None
+    return float(value)
 
 
 def _discover(gap_classes=None):
@@ -1344,14 +1361,13 @@ def _discover(gap_classes=None):
 
 
 def class_weights(path=CLASS_SECONDS):
-    """{`module.Class`: seconds} from the table of class weights (CLASS_SECONDS).
+    """{`module.Class`: CPU seconds} from the table of class weights (CLASS_SECONDS).
 
-    The file is a JSON object: `about` (a text) and `seconds` ({`module.Class`:
-    seconds of the class on a GitHub runner}). A table that is not of this form, that
-    holds one key two times, or that gives a class a number that is not finite and
-    above 0 (also `true`), raises ValueError: --shard then fails, and does not split
-    the suite by numbers that it cannot trust. A file that cannot be read raises
-    OSError."""
+    The file is a JSON object: `about` (a text) and `seconds` ({`module.Class`: the
+    CPU seconds of the class}). A table that is not of this form, that holds one key
+    two times, or that gives a class a number that is not finite and above 0 (also
+    `true`), raises ValueError: --shard then fails, and does not split the suite by
+    numbers that it cannot trust. A file that cannot be read raises OSError."""
     def pairs(items):
         keys = [key for key, _value in items]
         doubled = sorted({key for key in keys if keys.count(key) > 1})
@@ -1380,8 +1396,8 @@ def _default_weight(weights):
 
 
 def _weights_of(names, weights):
-    """{name: weight} for each of `names`: its seconds in `weights`, or the median of
-    `weights` for a name that `weights` does not hold (1 when it is empty)."""
+    """{name: weight} for each of `names`: its CPU seconds in `weights`, or the median
+    of `weights` for a name that `weights` does not hold (1 when it is empty)."""
     default = _default_weight(weights)
     return {name: weights.get(name, default) for name in names}
 
@@ -1393,8 +1409,8 @@ def shard_classes(names, weights, count):
     Longest processing time first: the classes, from the heaviest to the lightest
     (two classes of the same weight in the order of their names), go one by one to
     the shard that has the least weight so far (of two such shards, the one with the
-    lower number). The weight of a class is its seconds in `weights`; a class that
-    `weights` does not hold weighs the median of `weights` (1 when it is empty).
+    lower number). The weight of a class is its CPU seconds in `weights`; a class
+    that `weights` does not hold weighs the median of `weights` (1 when it is empty).
     The result depends only on the set of names and on `weights`."""
     weight = _weights_of(names, weights)
     loads, members = [0] * count, [set() for _ in range(count)]
@@ -1454,7 +1470,9 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
     `python -m unittest -v <class>` runs), `jobs` at a time, and print each class's
     output when it ends. The tests and their verdicts are those of `python -m
     unittest discover`; only the wall time differs, because the gates of different
-    classes run at the same time.
+    classes run at the same time. The line of each class gives its wall seconds and
+    its CPU seconds (_ONE_CLASS), or `CPU not known` when its process wrote none (the
+    class was stopped, or its process died).
 
     timeout   seconds for one class. A class that needs more is stopped and fails
               the run; the output that it gave until then is printed.
@@ -1520,7 +1538,7 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
 
     def run_class(name):
         start = time.monotonic()
-        counts_file = os.path.join(run_dir, name + ".json")
+        counts_file, counts = os.path.join(run_dir, name + ".json"), None
         try:
             done = subprocess.run([PYTHON, "-B", "-c", _ONE_CLASS, name, counts_file],
                                   cwd=TESTS, env=env, stdin=subprocess.DEVNULL,
@@ -1535,26 +1553,30 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
                 "what it gave until then)\n")
         try:
             with open(counts_file, encoding="utf-8") as fh:
-                found = json.load(fh)
-            ran, skipped = int(found["ran"]), int(found["skipped"])
+                counts = json.load(fh)
+            ran, skipped = int(counts["ran"]), int(counts["skipped"])
         except (OSError, ValueError, KeyError, TypeError):
             ran = skipped = 0       # the process did not end its tests (stopped, or it died)
-        return (name, code, ran, skipped, time.monotonic() - start, text)
+        return (name, code, ran, skipped, _cpu_seconds(counts), time.monotonic() - start, text)
 
     start = time.monotonic()
-    failed, skips, total, spent = [], collections.OrderedDict(), 0, 0.0
+    # The CPU seconds of the classes whose CPU is known, and the number of the others.
+    failed, skips, total, cpu_spent, no_cpu = [], collections.OrderedDict(), 0, 0.0, 0
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             # The pool starts the classes in start_order, and the output comes in the
             # order of discovery.
             started = {name: pool.submit(run_class, name) for name in start_order}
-            for name, code, ran, skipped, seconds, text in (started[name].result()
-                                                            for name in classes):
+            for name, code, ran, skipped, cpu, seconds, text in (started[name].result()
+                                                                 for name in classes):
                 if code == 0 and ran == 0 and skipped:
                     # unittest.SkipTest in setUpClass: every test of the class is skipped.
                     ran = skipped = classes[name]
                 total += ran
-                spent += seconds
+                if cpu is None:
+                    no_cpu += 1
+                else:
+                    cpu_spent += cpu
                 verdict = "ok"
                 if code == "timeout":
                     verdict = f"FAILED (stopped after {timeout:g} s)"
@@ -1567,7 +1589,9 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
                 if skipped:
                     skips[name] = skipped
                 print(f"===== {name}: {verdict}, {ran} test(s)"
-                      + (f" ({skipped} skipped)" if skipped else "") + f", {seconds:.1f} s", file=out)
+                      + (f" ({skipped} skipped)" if skipped else "") + f", {seconds:.1f} s"
+                      + (" (CPU not known)" if cpu is None else f" (CPU {cpu:.1f} s)"),
+                      file=out)
                 print("".join(f"    {line}\n" for line in text.rstrip("\n").split("\n")), end="",
                       file=out)
                 out.flush()
@@ -1582,10 +1606,15 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
               f"{time.monotonic() - start:.1f} s")
     notes = []
     if shard:
-        # The seconds of the classes of the shard in this run beside those of the
-        # table: when they drift apart, update the table (README.md, "CI"). A class
+        # The CPU seconds of the classes of the shard in this run beside those of
+        # the table: when they drift apart, update the table (README.md, "CI"). CPU
+        # seconds and not wall seconds: a class takes longer when heavy classes run
+        # beside it, but it needs about the same CPU. The sum holds only the classes
+        # whose CPU is known, and the line gives the number of the others. A class
         # that the table does not hold weighs the default (_weights_of()), and the
-        # line says how many such classes there are.
+        # line gives the number of such classes.
+        this_run = f"{cpu_spent:.1f} in this run" + (
+            f" ({no_cpu} class(es) without a CPU time)" if no_cpu else "")
         missing = [name for name in classes if name not in weights]
         table = f"{sum(weight.values()):.1f} by {os.path.basename(CLASS_SECONDS)}"
         if missing:
@@ -1595,7 +1624,7 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
                       "s, as the table is empty)")
         counts = (f"shard {number}/{shards}: {len(classes)} of {len(found)} test class(es), "
                   f"{total} test(s), {jobs} at a time, {time.monotonic() - start:.1f} s; the "
-                  f"seconds of its classes: {spent:.1f} in this run, {table}")
+                  f"CPU seconds of its classes: {this_run}, {table}")
         notes.append(f"classes of shard {number}/{shards}: {', '.join(classes)}")
     if skips:
         notes.append(f"{sum(skips.values())} test(s) skipped: "
@@ -1674,7 +1703,7 @@ def main(argv=None):
                          "PATH as Markdown (\"$GITHUB_STEP_SUMMARY\")")
     ap.add_argument("--shard", type=_shard, metavar="K/N",
                     help="with --run: run only the test classes of shard K of N (1 <= K <= N). "
-                         "The shards split the classes by their seconds in "
+                         "The shards split the classes by their CPU seconds in "
                          f"{os.path.basename(CLASS_SECONDS)}; each class is in one shard. "
                          "Not with class names")
     ap.add_argument("only", nargs="*",

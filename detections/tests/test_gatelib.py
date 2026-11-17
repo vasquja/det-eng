@@ -795,9 +795,28 @@ class Runner(unittest.TestCase):
     def test_green_suite(self):
         result = self.suite().run("detections/tests/gatelib.py", "--run", "--jobs", "2")
         gatelib.assert_accepts(result, r"^2 test class\(es\), 3 test\(s\), 2 at a time")
-        self.assertIn("===== test_one.Good: ok, 2 test(s)", result.stdout)
-        self.assertIn("===== test_one.AlsoGood: ok, 1 test(s)", result.stdout)
+        # The line of each class: its verdict, its tests, its wall seconds and its CPU
+        # seconds (_ONE_CLASS writes them).
+        self.assertRegex(result.stdout, r"(?m)^===== test_one\.Good: ok, 2 test\(s\), "
+                                        r"[0-9]+\.[0-9] s \(CPU [0-9]+\.[0-9] s\)$")
+        self.assertRegex(result.stdout, r"(?m)^===== test_one\.AlsoGood: ok, 1 test\(s\), "
+                                        r"[0-9]+\.[0-9] s \(CPU [0-9]+\.[0-9] s\)$")
         self.assertRegex(result.stdout, r"(?m)^OK$")
+
+    def test_the_cpu_seconds_of_a_class_are_a_finite_number_of_0_or_more(self):
+        """The runner reads the CPU seconds of a class from its counts file. A value
+        that is not a finite number of 0 or more, no value, and no counts (a class
+        that was stopped, or whose process died) give None: `CPU not known`."""
+        for counts, cpu in (({"ran": 1, "skipped": 0, "cpu": 1.25}, 1.25), ({"cpu": 0}, 0.0),
+                            ({"cpu": 3}, 3.0), ({"ran": 1, "skipped": 0}, None),
+                            ({"cpu": -0.5}, None), ({"cpu": "1.5"}, None), ({"cpu": True}, None),
+                            ({"cpu": None}, None), ({"cpu": [1.0]}, None),
+                            ({"cpu": float("nan")}, None), ({"cpu": float("inf")}, None),
+                            ([1.0], None), ("cpu", None), (None, None)):
+            with self.subTest(counts=counts):
+                self.assertEqual(gatelib._cpu_seconds(counts), cpu)
+                if cpu is not None:
+                    self.assertIs(type(gatelib._cpu_seconds(counts)), float)
 
     def test_a_failing_class_fails_the_run(self):
         tree = self.suite()
@@ -845,13 +864,18 @@ class Runner(unittest.TestCase):
         self.assertIn("===== test_two.Shrinks: FAILED (ran 1 of 2 test(s)), 1 test(s)",
                       result.stdout)
         # CONTROL: the class's own process is green, so only the count fails the run.
+        # Its counts file also holds its CPU seconds.
         counts = tree.out("counts.json")
         alone = tree.run_command(
             [gatelib.PYTHON, "-c", gatelib._ONE_CLASS, "test_two.Shrinks", counts],
             cwd="detections/tests", env={gatelib._OPEN_GAPS_FILE: os.devnull})
         self.assertEqual(alone.returncode, 0, alone.describe())
         with open(counts, encoding="utf-8") as fh:
-            self.assertEqual(json.load(fh), {"ran": 1, "skipped": 0})
+            written = json.load(fh)
+        self.assertEqual(sorted(written), ["cpu", "ran", "skipped"])
+        self.assertEqual((written["ran"], written["skipped"]), (1, 0))
+        self.assertIs(type(written["cpu"]), float)
+        self.assertGreater(written["cpu"], 0)
 
     def test_counts_come_from_the_result_of_a_class_and_not_from_its_output(self):
         """The runner reads no line of the text that unittest prints: the format of
@@ -880,7 +904,9 @@ class Runner(unittest.TestCase):
         left = tree.run("detections/tests/gatelib.py", "--run")
         gatelib.assert_rejects(left, r"^FAILED: 1 test class\(es\): test_two\.Leaves$",
                                exit_code=1)
-        self.assertIn("===== test_two.Leaves: FAILED (ran 0 of 1 test(s)), 0 test(s)", left.stdout)
+        # It wrote no CPU seconds either.
+        self.assertRegex(left.stdout, r"(?m)^===== test_two\.Leaves: FAILED \(ran 0 of 1 "
+                                      r"test\(s\)\), 0 test\(s\), [0-9.]+ s \(CPU not known\)$")
 
     def test_a_class_that_hangs_is_stopped_and_fails_the_run(self):
         """A class that does not end is stopped after --class-timeout seconds. The run
@@ -898,7 +924,9 @@ class Runner(unittest.TestCase):
         gatelib.assert_rejects(result, r"^FAILED: 1 test class\(es\): test_hang\.Hangs$",
                                exit_code=1)
         self.assertLess(result.seconds, 40)
-        self.assertIn("===== test_hang.Hangs: FAILED (stopped after 3 s), 0 test(s)", result.stdout)
+        # A class that was stopped wrote no counts: its CPU seconds are not known.
+        self.assertRegex(result.stdout, r"(?m)^===== test_hang\.Hangs: FAILED \(stopped after "
+                                        r"3 s\), 0 test\(s\), [0-9.]+ s \(CPU not known\)$")
         # The line of unittest for the test that passed: Python 3.10 prints
         # `test_d (test_hang.Hangs) ... ok`, later versions add `.test_d` to the class.
         self.assertRegex(result.stdout, r"(?m)^    test_d \(test_hang\.Hangs\b[^)\n]*\) \.\.\. ok$")
@@ -1157,22 +1185,37 @@ class Runner(unittest.TestCase):
 class Shards(unittest.TestCase):
     """`gatelib.py --run --shard K/N` on a constructed suite of five classes and a
     constructed table of class weights. A run of shard K runs exactly the classes of
-    shard K, the heaviest first, and prints them in the order of discovery. It counts
-    the known gaps whose test a class of shard K collects (also a test that a class
-    inherits from a mixin), and those whose test no class of the suite collects; a
-    gap whose test only the classes of other shards collect does not fail it. A gap
-    whose test no class collects fails each shard and the run of the whole suite,
-    also when its test ran."""
+    shard K, the heaviest first, and prints them in the order of discovery. Its
+    summary line gives the CPU seconds of its classes: the sum of the CPU seconds of
+    their lines, also when they run at the same time, and the number of the classes
+    whose CPU is not known. It counts the known gaps whose test a class of shard K
+    collects (also a test that a class inherits from a mixin), and those whose test
+    no class of the suite collects; a gap whose test only the classes of other
+    shards collect does not fail it. A gap whose test no class collects fails each
+    shard and the run of the whole suite, also when its test ran."""
 
-    # Each class writes its name into the file $SHARD_ORDER when it starts, and then
-    # sleeps $SHARD_SLEEP seconds (when the test gives the variable).
+    # Each class writes its name into the file $SHARD_ORDER when it starts. Then it
+    # burns $SHARD_BURN seconds of CPU in its own process and as many in a child
+    # process that it waits for, and then sleeps $SHARD_SLEEP seconds (when the test
+    # gives the variables). burn() counts CPU time (time.process_time()), so the CPU
+    # seconds of a class do not change when the machine is busy.
     RECORDED = (
-        "import os, time, unittest\n\n\n"
+        "import os, subprocess, sys, time, unittest\n\n\n"
+        "def burn(seconds):\n"
+        "    end = time.process_time() + seconds\n"
+        "    while time.process_time() < end:\n"
+        "        pass\n\n\n"
         "class Recorded(unittest.TestCase):\n"
         "    @classmethod\n"
         "    def setUpClass(cls):\n"
         "        with open(os.environ['SHARD_ORDER'], 'a', encoding='utf-8') as fh:\n"
         "            fh.write(cls.__module__ + '.' + cls.__name__ + '\\n')\n"
+        "        seconds = float(os.environ.get('SHARD_BURN', '0'))\n"
+        "        if seconds:\n"
+        "            burn(seconds)\n"
+        "            subprocess.run([sys.executable, '-B', '-c',\n"
+        "                            f'import recorded; recorded.burn({seconds!r})'],\n"
+        "                           check=True)\n"
         "        time.sleep(float(os.environ.get('SHARD_SLEEP', '0')))\n")
     GAPPY = (
         "import os, sys, unittest\n"
@@ -1224,13 +1267,15 @@ class Shards(unittest.TestCase):
         tree.write("detections/tests/class_seconds.json",
                    doc if isinstance(doc, str) else json.dumps(doc))
 
-    def run_shard(self, tree, shard, *options, sleep=0):
+    def run_shard(self, tree, shard, *options, burn=0, sleep=0):
         """(result, the classes in the order they started) of a run of one shard. Each
-        class of Recorded sleeps `sleep` seconds."""
+        class of Recorded burns `burn` seconds of CPU in its process and as many in a
+        child process, and then sleeps `sleep` seconds."""
         order = tree.out("order.txt")
         open(order, "w", encoding="utf-8").close()
         result = tree.run("detections/tests/gatelib.py", "--run", "--shard", shard, *options,
-                          env={"SHARD_ORDER": order, "SHARD_SLEEP": str(sleep)})
+                          env={"SHARD_ORDER": order, "SHARD_BURN": str(burn),
+                               "SHARD_SLEEP": str(sleep)})
         with open(order, encoding="utf-8") as fh:
             return result, fh.read().split()
 
@@ -1271,41 +1316,12 @@ class Shards(unittest.TestCase):
         tree.write("detections/tests/test_gappy.py", self.GAPPY.replace(
             "def check_gap_never_collected(", "def test_gap_collected("))
         summary = tree.out("summary.md")
-        # Each class sleeps 0.3 s, so that the seconds of the run are more than those
-        # of any one class by a measurable margin.
-        result, started = self.run_shard(tree, "2/2", "--jobs", "1", "--summary", summary,
-                                         sleep=0.3)
+        result, started = self.run_shard(tree, "2/2", "--jobs", "1", "--summary", summary)
         gatelib.assert_accepts(result, r"^shard 2/2: 3 of 5 test class\(es\), 4 test\(s\), "
-                                       r"1 at a time, [0-9.]+ s; the seconds of its classes: "
+                                       r"1 at a time, [0-9.]+ s; the CPU seconds of its classes: "
                                        r"[0-9.]+ in this run, 12\.0 by class_seconds\.json$")
         self.assertEqual(started, ["test_one.Good", "test_one.AlsoGood", "test_two.Light"])
         self.assertEqual(self.printed(result), self.SECOND)
-        # The seconds of the classes in this run: the sum of the seconds of the lines
-        # of the classes. Each value is rounded to 0.1 s, so the sum of the three lines
-        # is within 0.2 s of it (ROUNDING). Each class takes 0.3 s or more, so the sum
-        # is more than the line of any one class by more than ROUNDING: a run that
-        # gives the seconds of one class only fails here.
-        rounding = 0.2
-        each = [float(seconds) for seconds in
-                re.findall(r"(?m)^===== \S+: ok, \d+ test\(s\), ([0-9.]+) s$", result.stdout)]
-        spent = float(re.search(r"(?m)classes: ([0-9.]+) in this run, ", result.stdout).group(1))
-        self.assertEqual(len(each), 3)
-        self.assertGreaterEqual(min(each), 0.3)
-        self.assertAlmostEqual(spent, sum(each), delta=rounding)
-        self.assertGreater(spent, max(each) + rounding)
-        # The same when the classes run at the same time (CI runs 4 at a time): the
-        # seconds of the classes, not the wall time of the run, which is about that of
-        # one class here.
-        parallel, _ = self.run_shard(tree, "2/2", "--jobs", "3", sleep=0.3)
-        gatelib.assert_accepts(parallel, r"^shard 2/2: 3 of 5 test class\(es\), 4 test\(s\), "
-                                         r"3 at a time, ")
-        each = [float(seconds) for seconds in
-                re.findall(r"(?m)^===== \S+: ok, \d+ test\(s\), ([0-9.]+) s$", parallel.stdout)]
-        spent = float(re.search(r"(?m)classes: ([0-9.]+) in this run, ", parallel.stdout).group(1))
-        self.assertEqual(len(each), 3)
-        self.assertGreaterEqual(min(each), 0.3)
-        self.assertAlmostEqual(spent, sum(each), delta=rounding)
-        self.assertGreater(spent, max(each) + rounding)
         self.assertRegex(result.stdout, r"(?m)^classes of shard 2/2: test_one\.AlsoGood, "
                                         r"test_one\.Good, test_two\.Light$")
         self.assertRegex(result.stdout, r"(?m)^OK$")
@@ -1356,6 +1372,125 @@ class Shards(unittest.TestCase):
         gatelib.assert_accepts(result, r"^shard 1/2: .*, 3\.0 by class_seconds\.json \(3 "
                                        r"class\(es\) not in it, at 1\.0 s, as the table is "
                                        r"empty\)$")
+
+    # The line of a class that ends with its CPU seconds: (wall seconds, CPU seconds).
+    CLASS_LINE = r"(?m)^===== \S+: ok, \d+ test\(s\), ([0-9.]+) s \(CPU ([0-9.]+) s\)$"
+    # The summary line of shard 2/2 with the table of SECONDS: the CPU seconds of its
+    # classes in this run.
+    CPU_IN_THIS_RUN = (r"(?m)^shard 2/2: 3 of 5 test class\(es\), \d+ test\(s\), {jobs} at a "
+                       r"time, [0-9.]+ s; the CPU seconds of its classes: ([0-9.]+) in this "
+                       r"run{without}, 12\.0 by class_seconds\.json$")
+
+    def test_a_shard_gives_the_cpu_seconds_of_its_classes(self):
+        """The summary line of a shard gives the CPU seconds of its classes in this run:
+        the sum of the CPU seconds of the lines of its classes. The CPU seconds of a
+        class are those of its process and of the processes that it waited for. Each
+        class of shard 2/2 burns 0.3 s of CPU in its process and 0.3 s in a child
+        process, and then sleeps 0.3 s (wall time without CPU). With --jobs 1 the
+        classes run one after the other, with --jobs 3 at the same time (CI runs 4 at
+        a time)."""
+        burn, sleep = 0.3, 0.3
+        # Each value of a line is rounded to 0.1 s, so the sum of the three lines is
+        # within 0.15 s of the sum of the CPU seconds, and the summary line within
+        # 0.05 s: 0.2 s in all.
+        rounding = 0.2
+        tree = self.suite()
+        tree.replace("detections/tests/test_gappy.py", "def check_gap_never_collected(",
+                     "def test_gap_collected(")
+        for jobs in ("1", "3"):
+            with self.subTest(jobs=jobs):
+                result, _started = self.run_shard(tree, "2/2", "--jobs", jobs, burn=burn,
+                                                  sleep=sleep)
+                gatelib.assert_accepts(result, self.CPU_IN_THIS_RUN.format(jobs=jobs, without=""))
+                lines = [(float(wall), float(cpu))
+                         for wall, cpu in re.findall(self.CLASS_LINE, result.stdout)]
+                spent = float(re.search(self.CPU_IN_THIS_RUN.format(jobs=jobs, without=""),
+                                        result.stdout).group(1))
+                cpus = [cpu for _wall, cpu in lines]
+                self.assertEqual(len(lines), 3)
+                # The CPU of each class holds its burn in its own process and in its
+                # child. Kills: CPU without RUSAGE_CHILDREN (or without RUSAGE_SELF),
+                # each then about one burn.
+                self.assertGreaterEqual(min(cpus), 2 * burn)
+                # The CPU of a class is not its wall time: the class also slept.
+                # Kills: the wall seconds of a class given as its CPU.
+                for wall, cpu in lines:
+                    self.assertGreater(wall - cpu, sleep - 0.15)
+                # The summary line gives the sum of the CPU of the lines. Kills: X = the
+                # wall time of the run (with --jobs 3, about that of one class, on a
+                # machine with 3 CPUs or more; with --jobs 1, the CPU of the classes and
+                # their sleep); X = the sum of the wall seconds of the classes (that
+                # holds their sleep).
+                self.assertAlmostEqual(spent, sum(cpus), delta=rounding)
+                # It is more than the CPU of any one class by more than the rounding.
+                # Kills: X = the CPU of the last class (or of any one class).
+                self.assertGreater(spent, max(cpus) + rounding)
+
+    def test_a_class_without_a_cpu_time_is_named_and_left_out_of_the_sum(self):
+        """A class whose process wrote no CPU seconds: its line says `CPU not known`,
+        and the summary line leaves it out of the sum and gives the number of such
+        classes. The run ends as it would end without that number. In shard 2/2,
+        test_two.Light writes its counts without `cpu` (at exit, after _ONE_CLASS) and
+        passes; test_one.AlsoGood ends its process in its test, so it writes no
+        counts and fails; test_one.Good burns CPU and passes."""
+        tree = self.suite()
+        tree.replace("detections/tests/test_gappy.py", "def check_gap_never_collected(",
+                     "def test_gap_collected(")
+        tree.write("detections/tests/test_one.py",
+                   "import os\n"
+                   "from recorded import Recorded\n\n\n"
+                   "class Good(Recorded):\n"
+                   "    def test_a(self):\n        pass\n\n"
+                   "    def test_b(self):\n        pass\n\n\n"
+                   "class AlsoGood(Recorded):\n"
+                   "    def test_c(self):\n        os._exit(0)\n")
+        tree.write("detections/tests/test_two.py",
+                   "import atexit, json, sys\n"
+                   "from recorded import Recorded\n\n\n"
+                   "def drop_cpu(path):\n"
+                   "    with open(path, encoding='utf-8') as fh:\n"
+                   "        counts = json.load(fh)\n"
+                   "    del counts['cpu']\n"
+                   "    with open(path, 'w', encoding='utf-8') as fh:\n"
+                   "        json.dump(counts, fh)\n\n\n"
+                   "class Heavy(Recorded):\n"
+                   "    def test_d(self):\n        pass\n\n\n"
+                   "class Light(Recorded):\n"
+                   "    def test_e(self):\n"
+                   # The counts file of the class: argument 2 of _ONE_CLASS.
+                   "        atexit.register(drop_cpu, sys.argv[2])\n")
+        summary = tree.out("summary.md")
+        result, _started = self.run_shard(tree, "2/2", "--jobs", "3", "--summary", summary,
+                                          burn=0.1)
+        gatelib.assert_rejects(result, r"^FAILED: 1 test class\(es\): test_one\.AlsoGood$",
+                               exit_code=1)
+        self.assertNotIn("Traceback", result.output)
+        self.assertRegex(result.stdout, r"(?m)^===== test_two\.Light: ok, 1 test\(s\), "
+                                        r"[0-9.]+ s \(CPU not known\)$")
+        self.assertRegex(result.stdout, r"(?m)^===== test_one\.AlsoGood: FAILED \(ran 0 of 1 "
+                                        r"test\(s\)\), 0 test\(s\), [0-9.]+ s \(CPU not known\)$")
+        cpus = [float(cpu) for _wall, cpu in re.findall(self.CLASS_LINE, result.stdout)]
+        self.assertEqual(len(cpus), 1)          # test_one.Good
+        line = self.CPU_IN_THIS_RUN.format(jobs="3",
+                                           without=r" \(2 class\(es\) without a CPU time\)")
+        spent = float(re.search(line, result.stdout).group(1))
+        # The sum of the classes whose CPU is known: that of test_one.Good (the same
+        # number, so the same text).
+        self.assertEqual(spent, cpus[0])
+        with open(summary, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertRegex(text, r"(?m)^## Gate tests, shard 2/2: FAILED$")
+        self.assertRegex(text, r"(?m)^shard 2/2: .* in this run \(2 class\(es\) without a CPU "
+                               r"time\), 12\.0 by class_seconds\.json; 1 known gap\(s\), ")
+        # CONTROL: the same classes, with the CPU seconds of each: no class without
+        # a CPU time, and the run passes.
+        tree.replace("detections/tests/test_one.py", "        os._exit(0)\n", "        pass\n")
+        tree.replace("detections/tests/test_two.py", "        atexit.register(drop_cpu, "
+                     "sys.argv[2])\n", "        pass\n")
+        result, _started = self.run_shard(tree, "2/2", "--jobs", "3")
+        gatelib.assert_accepts(result, self.CPU_IN_THIS_RUN.format(jobs="3", without=""))
+        self.assertEqual(len(re.findall(self.CLASS_LINE, result.stdout)), 3)
+        self.assertNotIn("CPU not known", result.stdout)
 
     def test_a_known_gap_whose_test_no_class_collects_fails_each_shard(self):
         """No class collects the test of a gap whose marker is on a method that is no
