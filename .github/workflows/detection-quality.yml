@@ -141,7 +141,9 @@ name: detection-quality
 #                      passes while the gap is open and fails when the gate starts to
 #                      reject it; the job summary lists the known gaps. The gates
 #                      under test are those above and the validators and lints of the
-#                      other workflows, in their offline modes. Not a required check.
+#                      other workflows, in their offline modes. Three legs of a
+#                      matrix run one shard of the test classes each (gatelib.py
+#                      --shard K/3). Not a required check.
 #   external-records   SHADOW. Each rule on the datasets of splunk/attack_data of its
 #                      technique, pinned by a full commit and a sha256 in
 #                      detections/external/SOURCES.json (detections/
@@ -1073,8 +1075,21 @@ jobs:
     # a gate, a test, a planted artifact or a workflow changes. The job has no
     # `needs:`, no `if:` and no `continue-on-error:`, so no other job can skip it and
     # nothing hides its failure (test_suite.py checks that).
-    name: gate-tests
+    # Three runners (the owner's decision of 2026-11-17): each leg of the matrix runs
+    # one shard of the test classes (gatelib.py --shard K/3), and each class is in one
+    # shard. The shards split the classes by their seconds on a GitHub runner
+    # (detections/tests/class_seconds.json), so each leg needs less than three and
+    # a half minutes for its tests, where one runner needed six to eight for all of
+    # them (detections/tests/README.md, "CI"). fail-fast is false: a
+    # leg that fails does not cancel the other legs, so the log shows each failure.
+    # Each leg has the timeout and the pip cache of the job. GitHub names the check
+    # of each leg `gate-tests (shard K/3)`.
+    name: gate-tests (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     env:
       # Revalidate each index page that pip's cache holds (the pip cache note above).
       PIP_REFRESH_PACKAGE: ':all:'
@@ -1098,6 +1113,7 @@ jobs:
         run: pip install --quiet -r detections/requirements.txt
 
       - name: Run the gate tests (each gate must reject its planted bad artifacts)
+        # The classes of one shard (--shard K/3, K from the matrix), heaviest first.
         # One process for each test class, as many at a time as the runner has CPUs.
         # --no-skips: a skipped test is lost coverage, and it fails the job. The
         # conditions that skip a test outside CI are in detections/tests/README.md,
@@ -1107,13 +1123,14 @@ jobs:
         # then holds the output of every class. The script writes the job summary
         # itself (the result and the list of known gaps), also when a test fails
         # and when a test module does not import. A run also fails when the test
-        # of a known gap did not run. The counts of each class come from its
+        # of a known gap of its shard did not run (a gap whose test is in no class
+        # fails each shard). The counts of each class come from its
         # TestResult, not from the text that unittest prints, so they do not
         # depend on the Python version that `3.x` gives.
         # No pipe: the step's exit code is the script's.
         run: |
           python3 -B detections/tests/gatelib.py --run --no-skips \
-            --summary "$GITHUB_STEP_SUMMARY"
+            --shard ${{ matrix.shard }}/3 --summary "$GITHUB_STEP_SUMMARY"
 
   external-records:
     # SHADOW (roadmap item R3). Each rule on the datasets of splunk/attack_data of its
