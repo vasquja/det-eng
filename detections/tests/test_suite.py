@@ -1498,7 +1498,9 @@ class JobTimeouts(unittest.TestCase):
     `timeout-minutes` that is an integer, more than 0 and less than 360. The
     timeouts of its steps are integers too, and the timeout of the job is larger
     than their sum: when each step with a timeout uses all of it, the job still has
-    time for its other steps.
+    time for its other steps. The sum counts the timeout of each step that uses an
+    action two times: the runner gives the post step of the action (for example the
+    cleanup of actions/checkout) the timeout of its step too.
 
     A job that calls a reusable workflow (`uses:` on the job) cannot have
     `timeout-minutes`: the jobs of the called workflow have their own. Such a job
@@ -1511,7 +1513,9 @@ class JobTimeouts(unittest.TestCase):
     the fail-safe condition of the validator job runs it when the `changes` job
     fails. So each step of such a `changes` job has an integer `timeout-minutes` more
     than 0: a step that hangs then fails the job, and the timeout of the job does not
-    cancel it.
+    cancel it. The setup of the job (the runner downloads the actions) is not a step
+    and has no step timeout: a hang there gets to the timeout of the job, and the
+    job is cancelled.
 
     The rule reads the YAML. It does not see whether a value is large enough for a
     slow run, or too large: the pull request that sets a value says how it was
@@ -1524,9 +1528,9 @@ class JobTimeouts(unittest.TestCase):
     LIMIT = 360     # minutes: GitHub stops each job of a GitHub-hosted runner here
     # (workflow file, job id) of each job that calls a reusable workflow. None today.
     CALLS_A_WORKFLOW = []
-    # The workflows whose job `changes` tells the validator job if it must run.
-    SELECTORS = ("validate-cloud-detections.yml", "validate-k8s-detections.yml",
-                 "validate-staticpod-detections.yml", "validate-apiserver-detections.yml")
+    # The workflows whose job `changes` tells the validator job if it must run: the
+    # validator workflows of ValidatorSelection (one table, so the two classes agree).
+    SELECTORS = tuple(ValidatorSelection.WORKFLOWS)
 
     @classmethod
     def faults(cls, workflow, doc, callers=None):
@@ -1557,15 +1561,21 @@ class JobTimeouts(unittest.TestCase):
                 faults.append(f"{where}: timeout-minutes is {minutes}, not more than 0 "
                               f"and less than {cls.LIMIT}")
                 continue
-            steps = [step.get("timeout-minutes") for step in job.get("steps") or []
+            steps = [step for step in job.get("steps") or []
                      if isinstance(step, dict) and "timeout-minutes" in step]
-            not_int = [value for value in steps if type(value) is not int]
+            not_int = [step["timeout-minutes"] for step in steps
+                       if type(step["timeout-minutes"]) is not int]
             if not_int:
                 faults.append(f"{where}: a step has timeout-minutes {not_int[0]!r}, not an "
                               "integer")
-            elif sum(steps) >= minutes:
+                continue
+            # The post step of an action runs with the timeout of its step too.
+            total = sum(step["timeout-minutes"] * (2 if "uses" in step else 1)
+                        for step in steps)
+            if total >= minutes:
                 faults.append(f"{where}: timeout-minutes is {minutes}, not larger than the "
-                              f"sum of the timeouts of its steps ({sum(steps)})")
+                              f"sum of the timeouts of its steps ({total}, with the post "
+                              "step of each action)")
         return faults
 
     @classmethod
@@ -1647,6 +1657,10 @@ class JobTimeouts(unittest.TestCase):
             "    steps:\n      - run: 'true'\n        timeout-minutes: ${{ 5 }}\n"
             "  step-null:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n"
             "    steps:\n      - run: 'true'\n        timeout-minutes:\n"
+            "  post-step-fills-it:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n"
+            "    steps:\n      - uses: actions/checkout@v4\n        timeout-minutes: 5\n"
+            "  post-step-fits:\n    runs-on: ubuntu-latest\n    timeout-minutes: 11\n"
+            "    steps:\n      - uses: actions/checkout@v4\n        timeout-minutes: 5\n"
             "  null-job:\n"
             "  listed-caller:\n    uses: ./.github/workflows/called.yml\n"
             "  caller:\n    uses: ./.github/workflows/called.yml\n")
@@ -1654,13 +1668,15 @@ class JobTimeouts(unittest.TestCase):
         named = [re.match(r"w\.yml, job ([\w-]+)", fault).group(1) for fault in faults]
         self.assertEqual(named, ["none", "expression", "text", "fraction", "boolean", "zero",
                                  "default", "steps-fill-it", "step-expression", "step-null",
-                                 "null-job", "caller"])
+                                 "post-step-fills-it", "null-job", "caller"])
         self.assertIn("has no timeout-minutes", faults[0])
         # A value of 0 is out of range; the sum rule (0 steps, 0 >= 0) is not the reason.
         self.assertIn("timeout-minutes is 0, not more than 0 and less than 360", faults[5])
-        self.assertIn("not larger than the sum of the timeouts of its steps (15)", faults[7])
+        self.assertIn("not larger than the sum of the timeouts of its steps (15,", faults[7])
         self.assertIn("a step has timeout-minutes None, not an integer", faults[9])
-        self.assertIn("w.yml, job null-job is not a mapping", faults[10])
+        self.assertIn("not larger than the sum of the timeouts of its steps (10, with the "
+                      "post step of each action)", faults[10])
+        self.assertIn("w.yml, job null-job is not a mapping", faults[11])
         self.assertIn("calls a reusable workflow and is not in", faults[-1])
         # Without the list, the listed caller is a fault too.
         self.assertIn("w.yml, job listed-caller calls a reusable workflow",
@@ -1689,8 +1705,12 @@ class JobTimeouts(unittest.TestCase):
 
         good = ("      - uses: actions/checkout@v4\n        timeout-minutes: 5\n"
                 "      - id: f\n        run: 'true'\n        timeout-minutes: 3\n")
-        cloud, k8s, staticpod, apiserver = JobTimeouts.SELECTORS
-        workflows = {
+        # The real table, by position: so the control holds for any table of four or
+        # more workflows, and the real test checks that the table is that of
+        # ValidatorSelection.
+        self.assertGreaterEqual(len(JobTimeouts.SELECTORS), 4)
+        cloud, k8s, staticpod, apiserver = JobTimeouts.SELECTORS[:4]
+        workflows = {**dict.fromkeys(JobTimeouts.SELECTORS[4:], changes(good)),
             cloud: changes("      - uses: actions/checkout@v4\n        timeout-minutes: 5\n",
                            "      - id: f\n        run: 'true'\n"),
             k8s: changes(good),
@@ -1746,6 +1766,9 @@ class JobTimeouts(unittest.TestCase):
         self.assertEqual(self.stale_callers(workflows), [],
                          "JobTimeouts.CALLS_A_WORKFLOW must name only jobs that call a "
                          "reusable workflow")
+        self.assertEqual(set(self.SELECTORS), set(ValidatorSelection.WORKFLOWS),
+                         "JobTimeouts.SELECTORS must be the validator workflows of "
+                         "ValidatorSelection")
         self.assertEqual(self.changes_step_faults(workflows), [],
                          "give each step of these jobs `changes` a `timeout-minutes` (an "
                          "integer of minutes): a step that gets to its timeout fails its job")

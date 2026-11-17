@@ -416,7 +416,8 @@ the two timeouts.
   `sigma_eval.py` lists.
 - Each job of each workflow has a `timeout-minutes` (class `JobTimeouts`). It is
   an integer, more than 0 and less than 360, and larger than the sum of the
-  timeouts of the job's steps. GitHub stops a job without one after 360 minutes,
+  timeouts of the job's steps (a step that uses an action counts two times: the
+  post step of the action runs with the same timeout). GitHub stops a job without one after 360 minutes,
   and until then a job that hangs holds a runner and keeps its checks pending. A
   job that calls a reusable workflow cannot have the key; such a job must be in
   the table `JobTimeouts.CALLS_A_WORKFLOW` (today it is empty), and each entry of
@@ -424,7 +425,8 @@ the two timeouts.
   validator workflows (the table `JobTimeouts.SELECTORS`) has an integer
   `timeout-minutes` more than 0. A step that gets to its timeout fails, so the
   `changes` job ends as a failure, and the fail-safe condition of the validator job
-  runs the validator. A job that gets to its timeout is cancelled. The rule does
+  runs the validator. A job that gets to its timeout is cancelled; the setup of a
+  job (the download of its actions) is not a step and has no step timeout. The rule does
   not see whether a value is right for a slow run: the pull request that sets a
   value says how it was measured, and a comment beside a value gives the reason
   when it is not plain.
