@@ -106,6 +106,8 @@ on:
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
+      # sigma_explain.py imports rule_cases.py (for its self-test).
+      - 'detections/rule_cases.py'
       - 'detections/requirements.txt'
       - 'atomics/T1098.006/**'
       - 'atomics/T1053.007/**'
@@ -249,6 +251,7 @@ jobs:
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
             'detections/requirements.txt' \
             'atomics/T1098.006/' \
             'atomics/T1053.007/' \
@@ -336,6 +339,7 @@ jobs:
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
             'detections/requirements.txt' \
             'atomics/T1098.006/' \
             'atomics/T1053.007/' \

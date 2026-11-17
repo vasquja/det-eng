@@ -26,6 +26,8 @@ on:
       - 'detections/validate_k8s_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
+      # sigma_explain.py imports rule_cases.py (for its self-test).
+      - 'detections/rule_cases.py'
       - 'detections/requirements.txt'
       - 'atomics/T1609/**'
       - '.github/workflows/validate-k8s-detections.yml'
@@ -123,6 +125,7 @@ jobs:
             'detections/validate_k8s_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
             'detections/requirements.txt' \
             'atomics/T1609/' \
             '.github/workflows/validate-k8s-detections.yml')

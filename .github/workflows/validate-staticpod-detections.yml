@@ -44,6 +44,8 @@ on:
       - 'detections/validate_staticpod_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
+      # sigma_explain.py imports rule_cases.py (for its self-test).
+      - 'detections/rule_cases.py'
       - 'detections/requirements.txt'
       - 'atomics/T1543.005/**'
       - '.github/workflows/validate-staticpod-detections.yml'
@@ -145,6 +147,7 @@ jobs:
             'detections/validate_staticpod_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
             'detections/requirements.txt' \
             'atomics/T1543.005/' \
             '.github/workflows/validate-staticpod-detections.yml')
