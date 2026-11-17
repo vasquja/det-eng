@@ -28,6 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No pip cache in this job: only setup-python gives one, and a setup-python
+      # step puts its own python3 first on PATH, so the venv below would not be on
+      # the system Python.
       - name: Install audit, build tools and validator requirements
         run: |
           bash .github/scripts/apt_install.sh auditd gcc python3-venv
@@ -79,6 +82,10 @@ jobs:
     # expressions"), compiling each value with Python re and RE2.
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # pip's cache (setup-python `cache: pip`): revalidate each index page that the
+      # cache holds (the pip cache note at the top of detection-quality.yml).
+      PIP_REFRESH_PACKAGE: ':all:'
     steps:
       - uses: actions/checkout@v4
 
@@ -87,6 +94,11 @@ jobs:
           # google-re2 ships wheels up to cp314; '3.x' now resolves to 3.15,
           # where pip falls back to a Bazel source build that fails.
           python-version: '3.14'
+          # The pip of the venv below runs as the same user with the same
+          # environment, so it uses the directory that this cache restores
+          # (~/.cache/pip). The packages are named only in this file.
+          cache: pip
+          cache-dependency-path: .github/workflows/validate-detections.yml
 
       - name: Install sigma-cli
         run: |

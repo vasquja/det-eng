@@ -166,6 +166,32 @@ name: detection-quality
 # The weekly schedule re-proves every rule even when nothing in the repo changed
 # (pySigma, the runner image and the kernel drift underneath the rules).
 # schedule-freshness checks that each weekly schedule still runs and passes.
+#
+# pip cache. Most jobs that install the requirements restore pip's cache directory
+# (setup-python `cache: pip`). The key holds the exact Python version and one hash of
+# the files of `cache-dependency-path`: the requirements files that the job installs,
+# and this file when a job installs a package that only this file names
+# (google-re2). When no cache has the key, setup-python restores the newest cache of
+# the same Python version, and a job that passed saves the cache under the key at its
+# end. A pull request run saves only for the runs of that pull request. A push,
+# schedule or dispatch run on main saves for the runs of main and of each pull
+# request into main (GitHub's cache scopes).
+# The cache holds downloaded files and the wheels that pip built. It does not
+# hold the installed set: pip resolves each requirement against the index again, and
+# checks each file against the sha256 of the index. From pip 26.2, pip uses a cached
+# index page for up to 600 s (PyPI's Cache-Control) and does not ask the index;
+# PIP_REFRESH_PACKAGE ':all:' in each job with the cache makes pip ask again
+# (test_suite.py, class PipCache). Thus a run with a restored cache installs the
+# versions that a run without one installs.
+# The exception is a wheel that pip built. On '3.x' (CPython 3.15) PyYAML has no
+# wheel, so pip builds it, and the cache keeps that wheel. When the build of its C
+# extension fails, PyYAML gives a pure-Python wheel, and pip uses that wheel again
+# also where the build would work (pip's documentation, "Avoiding caching").
+# pySigma needs the C extension (its YAML loader is yaml.CSafeLoader), so each job
+# with the cache fails without it, and a job that fails saves no cache. Two jobs
+# can pass without the C extension: schedule-freshness (it needs PyYAML only) and
+# benign-linux-live (a scorer error only warns). They have no cache. external-records
+# has none either (a cache there is the owner's decision).
 
 on:
   push:
@@ -182,6 +208,9 @@ jobs:
   rule-cases:
     name: rule-cases
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -189,6 +218,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install requirements
         run: pip install --quiet -r detections/requirements.txt
@@ -221,6 +252,9 @@ jobs:
     # this workflow has no paths filter, so the job runs on every change to them.
     name: null-safety
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -228,6 +262,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install requirements
         run: pip install --quiet -r detections/requirements.txt
@@ -264,6 +300,9 @@ jobs:
     # once for each variant. No paths filter: it runs on every change.
     name: representation-variants
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -272,6 +311,10 @@ jobs:
         with:
           # google-re2 ships wheels up to cp314 (see validate-detections, sigma-lint).
           python-version: '3.14'
+          cache: pip
+          cache-dependency-path: |
+            detections/requirements.txt
+            .github/workflows/detection-quality.yml
 
       - name: Install requirements
         run: |
@@ -312,6 +355,9 @@ jobs:
   check-sufficiency:
     name: check-sufficiency
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -319,6 +365,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install requirements
         run: pip install --quiet -r detections/requirements.txt
@@ -349,6 +397,9 @@ jobs:
     # copy is stale, so the README never shows coverage the repository lost.
     name: coverage-report
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -356,6 +407,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install requirements
         run: pip install --quiet -r detections/requirements.txt
@@ -370,6 +423,9 @@ jobs:
     # detections/k8s/policy_coverage.json is stale; regenerate it with --update.
     name: platform-coverage
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -434,6 +490,8 @@ jobs:
         if: steps.f.outputs.relevant == 'true'
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install requirements
         if: steps.f.outputs.relevant == 'true'
@@ -489,6 +547,9 @@ jobs:
     name: sufficiency-ratchet
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -498,6 +559,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Report the base branch with its own check_sufficiency.py
         id: base
@@ -653,6 +716,9 @@ jobs:
   benign-corpus:
     name: benign-corpus
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -660,6 +726,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install requirements
         run: pip install --quiet -r detections/requirements.txt
@@ -703,6 +771,9 @@ jobs:
     # always run them.
     name: provider-mappings
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -759,6 +830,11 @@ jobs:
         with:
           # google-re2 ships wheels up to cp314 (see validate-detections, sigma-lint).
           python-version: '3.14'
+          cache: pip
+          cache-dependency-path: |
+            detections/requirements.txt
+            detections/requirements-convert.txt
+            .github/workflows/detection-quality.yml
 
       - name: Install requirements (validators + conversion checks)
         if: steps.f.outputs.relevant == 'true'
@@ -812,6 +888,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No pip cache: this job can pass without the C extension of PyYAML (the pip
+      # cache note at the top of this file).
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -966,6 +1044,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No pip cache: this job can pass without the C extension of PyYAML (the pip
+      # cache note at the top of this file).
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -1005,6 +1085,9 @@ jobs:
     # nothing hides its failure (test_suite.py checks that).
     name: gate-tests
     runs-on: ubuntu-latest
+    env:
+      # Revalidate each index page that pip's cache holds (the pip cache note above).
+      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 20
     permissions:
       contents: read
@@ -1014,6 +1097,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: pip
+          cache-dependency-path: detections/requirements.txt
 
       - name: Install requirements
         # detections/requirements.txt only: the suite needs no other package. With
