@@ -17,6 +17,11 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
     SoftSteps         no step that runs a script or the unit tests of the repository
                       has `continue-on-error` (on the step or on its job), but the
                       shadow steps that the class lists
+    ValidatorSelection  the four validator workflows select their validator fail
+                      safe: the push list and the changes-job lists agree, each git
+                      diff of a changes job passes --no-renames, a validator job runs
+                      when its changes job did not succeed, and the lists cover each
+                      file that the job reads (JobCondition reads the `if:` of a job)
     KnownGapList      every @known_gap names an item of section 1 of docs/ROADMAP.md,
                       and no open gap names an item that is `done`
     PlantedArtifacts  every file under known_bad/ is planted by a test, and none has
@@ -602,6 +607,808 @@ class SoftSteps(unittest.TestCase):
             "`continue-on-error`: a gate that fails there leaves the job (for a step) or "
             "the workflow run (for a job) green. Remove `continue-on-error`; for a check "
             "that must not block yet, add the step to SoftSteps.SHADOW")
+
+
+class JobCondition:
+    """The value of the `if:` of a job, for the forms of the GitHub Actions expression
+    language that the validator jobs use: literals ('text', numbers, true, false,
+    null), property names (`needs.changes.result`), `!`, `==`, `!=`, `&&`, `||`,
+    parentheses and the four status functions. A form that it does not read (another
+    function, an index, `<`, a context that the caller does not give) is a
+    ValueError: the test then fails, and does not guess.
+
+    The rules of GitHub that it models: an `if:` with no status function gets
+    `success() &&` in front; at the level of a job, success() is true when the run
+    is not cancelled and each job of `needs` ended in success, failure() when one of
+    them failed, cancelled() when the run is cancelled, always() always; `&&` and
+    `||` give one of their operands; `==` compares text without letter case, and
+    values of two types as numbers; '', 0, null and false are false."""
+
+    TOKEN = re.compile(r"\s*(?:(?P<text>'(?:[^']|'')*')|(?P<number>\d+(?:\.\d+)?)"
+                       r"|(?P<op>==|!=|&&|\|\||[!().])|(?P<name>[A-Za-z_][\w-]*))")
+    STATUS = ("success", "failure", "cancelled", "always")
+
+    def __init__(self, text):
+        text = str(text).strip()
+        whole = re.fullmatch(r"\$\{\{(.*)\}\}", text, re.DOTALL)
+        text = whole.group(1) if whole else text
+        if "${{" in text or "}}" in text:
+            raise ValueError(f"{text!r}: an `if:` that mixes text and ${{{{ }}}} is not read")
+        self.tokens, at = [], 0
+        while text[at:].strip():
+            found = self.TOKEN.match(text, at)
+            if not found:
+                raise ValueError(f"{text!r}: no token at {text[at:]!r}")
+            self.tokens.append((found.lastgroup, found.group(found.lastgroup)))
+            at = found.end()
+        self.text = text.strip()
+
+    def value(self, needs, inputs=None, cancelled=False):
+        """True when the job runs. needs: {job id: (result, {output: value})}."""
+        self._needs, self._inputs, self._cancelled = needs, inputs or {}, cancelled
+        self._at = 0
+        result = self._or()
+        if self._at != len(self.tokens):
+            raise ValueError(f"{self.text!r}: tokens after the end: {self.tokens[self._at:]}")
+        if not any(kind == "name" and word.lower() in self.STATUS
+                   for kind, word in self.tokens):
+            result = self._status("success") and result
+        return self.truth(result)
+
+    @staticmethod
+    def truth(value):
+        if isinstance(value, float) and value != value:        # NaN
+            return False
+        return value not in (None, False, 0, "")
+
+    @staticmethod
+    def _number(value):
+        if value is None or isinstance(value, bool):
+            return float(bool(value))
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value.strip()) if value.strip() else 0.0
+            except ValueError:
+                return float("nan")
+        return float("nan")
+
+    @classmethod
+    def equal(cls, left, right):
+        kinds = [None if v is None else bool if isinstance(v, bool) else
+                 float if isinstance(v, (int, float)) else type(v) for v in (left, right)]
+        if kinds[0] is kinds[1] is str:
+            return left.casefold() == right.casefold()
+        if kinds[0] is kinds[1]:
+            return left == right
+        return cls._number(left) == cls._number(right)
+
+    def _peek(self):
+        return self.tokens[self._at] if self._at < len(self.tokens) else (None, None)
+
+    def _take(self, word=None):
+        kind, found = self._peek()
+        if kind is None or (word is not None and found != word):
+            raise ValueError(f"{self.text!r}: wanted {word or 'a token'} at token {self._at}")
+        self._at += 1
+        return kind, found
+
+    def _or(self):
+        value = self._and()
+        while self._peek() == ("op", "||"):
+            self._take()
+            right = self._and()
+            value = value if self.truth(value) else right
+        return value
+
+    def _and(self):
+        value = self._equality()
+        while self._peek() == ("op", "&&"):
+            self._take()
+            right = self._equality()
+            value = right if self.truth(value) else value
+        return value
+
+    def _equality(self):
+        value = self._unary()
+        while self._peek() in (("op", "=="), ("op", "!=")):
+            _, op = self._take()
+            same = self.equal(value, self._unary())
+            value = same if op == "==" else not same
+        return value
+
+    def _unary(self):
+        if self._peek() == ("op", "!"):
+            self._take()
+            return not self.truth(self._unary())
+        return self._primary()
+
+    def _primary(self):
+        kind, word = self._take()
+        if kind == "text":
+            return word[1:-1].replace("''", "'")
+        if kind == "number":
+            return float(word)
+        if (kind, word) == ("op", "("):
+            value = self._or()
+            self._take(")")
+            return value
+        if kind != "name":
+            raise ValueError(f"{self.text!r}: {word!r} is not read here")
+        if word in ("true", "false", "null"):
+            return {"true": True, "false": False, "null": None}[word]
+        if self._peek() == ("op", "("):
+            if word.lower() not in self.STATUS:
+                raise ValueError(f"{self.text!r}: the function {word}() is not modelled")
+            self._take()
+            self._take(")")
+            return self._status(word.lower())
+        names = [word]
+        while self._peek() == ("op", "."):
+            self._take()
+            names.append(self._take()[1])
+        if names[0] == "needs":
+            value = {job: {"result": result, "outputs": outputs}
+                     for job, (result, outputs) in self._needs.items()}
+        elif names[0] == "inputs":
+            value = self._inputs
+        else:
+            raise ValueError(f"{self.text!r}: the context {names[0]!r} is not modelled")
+        for name in names[1:]:
+            value = value.get(name) if isinstance(value, dict) else None
+        return value
+
+    def _status(self, name):
+        results = [result for result, _ in self._needs.values()]
+        if name == "success":
+            return not self._cancelled and all(r == "success" for r in results)
+        if name == "failure":
+            return any(r == "failure" for r in results)
+        if name == "cancelled":
+            return self._cancelled
+        if name == "always":
+            return True
+        raise ValueError(f"{self.text!r}: the function {name}() is not modelled")
+
+
+class ValidatorSelection(gatelib.GateCase):
+    """The four validator workflows run their heavy, required validator only when a
+    pull request changes a file that it reads. A cheap `changes` job decides that
+    from `git diff --name-only` of the pull request and a list of paths, and the
+    validator job reads its output. A skipped required check counts as passed, so
+    each fault in that selection lets a change that breaks a detection merge green.
+    The class holds four rules for each workflow of WORKFLOWS:
+
+    1. The lists agree. The `push: paths:` list and the list of the changes job hold
+       the same paths (`dir/**` there is `dir/` here). In
+       validate-apiserver-detections.yml, step f is the list of validate-apiserver
+       and step r the list of validate-apiserver-recommended: the push list is the
+       two together, step r holds each rule folder and atomics folder of step f, and
+       they differ by the lab-only and recommended-only inputs (APISERVER_ONLY; rule
+       4 checks that only that job reads each of them). Each entry names a file or a
+       folder of the repository.
+    2. Each git command of a changes job that lists changed files passes
+       --no-renames. Without it, a rule moved out of a listed folder gives only its
+       new path, and the validator is skipped. A test runs each changes step in a
+       constructed git repository to show that.
+    3. The `if:` of each validator job runs it unless the changes job succeeded and
+       said `false`: it runs when the changes job failed (or ended in another way, or
+       wrote no output), and not when the run is cancelled (`!cancelled()`, not
+       `always()`). The test evaluates the `if:` with JobCondition for each case of
+       CASES, so an `if:` of another spelling with the same truth table passes, and
+       a form that JobCondition does not read fails. The job keeps its required
+       check name and `needs: changes`.
+    4. The list of each validator job covers what it reads (job_inputs()): each rule
+       file of the validator's MANIFEST and MISS_MANIFEST (check_sufficiency.py reads
+       their paths), the atomics folder of each rule folder, each local Python
+       module that a script of the job imports (also inside a function; a dynamic
+       import is not followed), each file of the repository that a step of the job
+       names, each file that a kind config of the job mounts, and the workflow.
+
+    The rules read text. They do not see a file that a program reads by a name that
+    it builds at run time, a step that a different job runs, or the list of
+    detections/k8s/ in validate-k8s-detections.yml, which is wider than what the job
+    reads (a wider list only runs the validator more often)."""
+
+    PARTS = ()      # the tests read the repository; the git test uses an empty tree
+
+    WORKFLOWS = {
+        "validate-cloud-detections.yml": "detections/validate_cloud_detections.py",
+        "validate-k8s-detections.yml": "detections/validate_k8s_detections.py",
+        "validate-staticpod-detections.yml": "detections/validate_staticpod_detections.py",
+        "validate-apiserver-detections.yml": "detections/validate_apiserver_detections.py",
+    }
+    # The jobs that the changes job selects: job id -> (required check name, or the
+    # name of a check that is not required; the output of the changes job; the step
+    # of the changes job that writes it and holds the list of the job).
+    JOBS = {
+        "validate-cloud-detections.yml": {"validate": ("validate-cloud", "relevant", "f")},
+        "validate-k8s-detections.yml": {"validate": ("validate-k8s", "relevant", "f")},
+        "validate-staticpod-detections.yml": {"validate": ("validate-staticpod", "relevant", "f")},
+        "validate-apiserver-detections.yml": {
+            "validate": ("validate-apiserver", "relevant", "f"),
+            "validate-recommended": ("validate-apiserver-recommended", "recommended", "r")},
+    }
+    # validate-apiserver-detections.yml: the inputs of one of its two jobs only. Step f
+    # holds the first, step r the second, and the push list both.
+    APISERVER_ONLY = {
+        "validate": ("detections/k8s/audit-policy-apiserver.yaml",
+                     "detections/k8s/kind-apiserver-cluster.yaml",
+                     "detections/score_benign.py", "detections/benign_corpus.py"),
+        "validate-recommended": ("detections/k8s/audit-policy-recommended.yaml",
+                                 "detections/k8s/kind-apiserver-recommended-cluster.yaml"),
+    }
+    # (case, run cancelled, result of the changes job, its outputs, the job runs). OUT
+    # is the output that the job reads. The first rows are the property: run unless
+    # the changes job succeeded and said 'false'; never in a cancelled run.
+    CASES = (
+        ("the changes job failed before its step wrote the output", False, "failure", {}, True),
+        ("the changes job failed after its step wrote 'false'", False, "failure",
+         {"OUT": "false"}, True),
+        ("the changes job ended as cancelled, and the run goes on", False, "cancelled", {}, True),
+        ("the changes job was skipped", False, "skipped", {}, True),
+        ("the changes job found a file that the job reads", False, "success", {"OUT": "true"}, True),
+        ("the changes job found no file that the job reads", False, "success",
+         {"OUT": "false"}, False),
+        ("the changes job succeeded and wrote no output", False, "success", {}, True),
+        ("the run is cancelled (the output says true)", True, "success", {"OUT": "true"}, False),
+        ("the run is cancelled (the changes job failed)", True, "failure", {}, False),
+        ("the run is cancelled (the changes job was cancelled)", True, "cancelled", {}, False),
+    )
+    # A dispatch of the version matrix gives node_image: validate-recommended never
+    # runs then (its own condition), and every other job runs as for the other events.
+    NODE_IMAGE_ONLY = {"validate-recommended"}
+    FOLDER = re.compile(r"(?:detections/sigma|atomics)/[^/]+/")      # a rule or atomics folder
+    LISTING = re.compile(r"\bgit\s+(?:-\S+\s+)*(?:diff|diff-tree|log|show|whatchanged)\b")
+    REPO_PATH = re.compile(r"(?<![\w./-])(?:\./)?((?:detections|atomics|\.github)/[\w.-]+"
+                           r"(?:/[\w.-]+)*/?)")
+    PYTHON_SCRIPT = re.compile(r"\bpython[\d.]*\s+(?:-\S+\s+)*([\w./-]+\.py)\b")
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.texts = {}
+        for workflow in cls.WORKFLOWS:
+            with open(os.path.join(gatelib.REPO, ".github", "workflows", workflow),
+                      encoding="utf-8") as fh:
+                cls.texts[workflow] = fh.read()
+        cls.rules = cls.manifest_rules(sorted(set(cls.WORKFLOWS.values())))
+
+    # -- what the workflows say --------------------------------------------------
+
+    @staticmethod
+    def manifest_rules(scripts):
+        """{validator script: [repository path of each rule file of its MANIFEST and
+        MISS_MANIFEST]}, as R1 of check_sufficiency.py reads them
+        (_entry_rule_path), from a process of its own."""
+        code = ("import json, os, sys\n"
+                "sys.path.insert(0, 'detections')\n"
+                "import importlib, check_sufficiency as cs\n"
+                "out = {}\n"
+                "for script in sys.argv[1:]:\n"
+                "    mod = importlib.import_module(os.path.basename(script)[:-3])\n"
+                "    out[script] = sorted({os.path.relpath(cs._entry_rule_path(mod, e), cs.REPO)"
+                ".replace(os.sep, '/')\n"
+                "                          for table in ('MANIFEST', 'MISS_MANIFEST')\n"
+                "                          for e in getattr(mod, table, [])})\n"
+                "print(json.dumps(out))\n")
+        done = subprocess.run([gatelib.PYTHON, "-B", "-c", code, *scripts], cwd=gatelib.REPO,
+                              capture_output=True, text=True, timeout=120, check=False)
+        if done.returncode != 0:
+            raise AssertionError("the MANIFEST tables were not read:\n" + done.stderr)
+        rules = json.loads(done.stdout.strip().splitlines()[-1])
+        for script in scripts:
+            if not rules.get(script):
+                raise AssertionError(f"{script}: no rule file was read from its MANIFEST")
+        return rules
+
+    _parsed, _imports = {}, {}
+
+    @classmethod
+    def docs(cls, texts=None):
+        """{workflow: parsed YAML} of the real texts, or of `texts`. Do not change a
+        document: the parse of a text is kept for the next call."""
+        import yaml     # PyYAML: in detections/requirements.txt
+
+        for text in (texts or cls.texts).values():
+            if text not in cls._parsed:
+                cls._parsed[text] = yaml.safe_load(text)
+        return {workflow: cls._parsed[text] for workflow, text in (texts or cls.texts).items()}
+
+    @staticmethod
+    def changes_steps(doc):
+        """{step id: run text} of the steps of the changes job that have an id."""
+        return {step["id"]: step.get("run") or "" for step in doc["jobs"]["changes"]["steps"]
+                if step.get("id")}
+
+    @staticmethod
+    def patterns(run):
+        """The entries of the `patterns=$(printf '%s\\n' ...)` list of a step, or None."""
+        found = re.findall(r"^\s*patterns=\$\(printf '%s\\n' \\\n(.*?)\)\s*$", run,
+                           re.MULTILINE | re.DOTALL)
+        return re.findall(r"'([^']*)'", found[0]) if len(found) == 1 else None
+
+    @classmethod
+    def lists(cls, workflow, doc):
+        """(push list as changes-job entries, {step id: entries}, faults). A push
+        path `dir/**` is the entry `dir/`; a path without a wildcard is itself."""
+        faults, push = [], []
+        triggers = doc.get("on", doc.get(True))     # YAML 1.1 reads the key `on` as true
+        for path in (triggers.get("push") or {}).get("paths") or []:
+            if path.endswith("/**") and not re.search(r"[*?\[\]!]", path[:-3]):
+                push.append(path[:-2])
+            elif not re.search(r"[*?\[\]!]", path):
+                push.append(path)
+            else:
+                faults.append(f"{workflow}: push: paths: holds {path!r}, a form that the "
+                              "changes job cannot mirror (use a path, or dir/**)")
+        steps = {}
+        for step_id in sorted({step for _, _, step in cls.JOBS[workflow].values()}):
+            entries = cls.patterns(cls.changes_steps(doc).get(step_id, ""))
+            if entries is None:
+                faults.append(f"{workflow}: step {step_id} of the changes job has no "
+                              "patterns=$(printf ...) list")
+                entries = []
+            steps[step_id] = entries
+        return push, steps, faults
+
+    # -- rule 1: the lists agree --------------------------------------------------
+
+    @classmethod
+    def sync_faults(cls, docs, root=gatelib.REPO):
+        faults = []
+        for workflow, doc in docs.items():
+            push, steps, found = cls.lists(workflow, doc)
+            faults += found
+            named = {"the push list": push, **{f"step {s}": e for s, e in steps.items()}}
+            for where, entries in named.items():
+                for entry in sorted({e for e in entries if entries.count(e) > 1}):
+                    faults.append(f"{workflow}, {where}: {entry!r} is listed twice")
+                for entry in entries:
+                    if re.search(r"[*?\[\]]", entry):
+                        faults.append(f"{workflow}, {where}: {entry!r} holds a wildcard, which "
+                                      "the changes job does not read")
+                    elif not (os.path.isdir(os.path.join(root, entry)) if entry.endswith("/")
+                              else os.path.isfile(os.path.join(root, entry))):
+                        faults.append(f"{workflow}, {where}: {entry!r} names no "
+                                      f"{'folder' if entry.endswith('/') else 'file'} of the "
+                                      "repository")
+            union = set().union(*map(set, steps.values()))
+            for entry in sorted(set(push) - union):
+                faults.append(f"{workflow}: {entry!r} is in push: paths: and in no list of the "
+                              "changes job")
+            for entry in sorted(union - set(push)):
+                faults.append(f"{workflow}: {entry!r} is in a list of the changes job and not in "
+                              "push: paths:")
+            if workflow == "validate-apiserver-detections.yml" and {"f", "r"} <= set(steps):
+                f, r = set(steps["f"]), set(steps["r"])
+                for mine, other, a, b in ((f, r, "f", "r"), (r, f, "r", "f")):
+                    for entry in sorted(e for e in mine - other if cls.FOLDER.fullmatch(e)):
+                        faults.append(f"{workflow}: step {b} does not hold {entry!r} of step {a} "
+                                      "(AGENTS.md, CI wiring: each rule folder and atomics "
+                                      "folder is in step f and in step r)")
+                for job, step, other in (("validate", f, r), ("validate-recommended", r, f)):
+                    only = set(cls.APISERVER_ONLY[job])
+                    for entry in sorted((step - other) - only):
+                        if not cls.FOLDER.fullmatch(entry):
+                            faults.append(f"{workflow}: {entry!r} is only in the list of {job}; "
+                                          "add it to the other list, or to "
+                                          "ValidatorSelection.APISERVER_ONLY")
+                    for entry in sorted(only - (step - other)):
+                        faults.append(f"{workflow}: {entry!r} (APISERVER_ONLY, {job}) is not "
+                                      f"only in the list of {job}")
+        return faults
+
+    # -- rule 2: --no-renames -----------------------------------------------------
+
+    @staticmethod
+    def commands(run):
+        """The commands of a step (a line cut at `;`, `&&` and `||`), without the
+        messages: a command whose first word is echo or printf (after then, else, do,
+        `!`) is left out, so `echo "git diff failed; ..."` is not a git command."""
+        found = []
+        for line in gatelib._command_lines(run):
+            for command in re.split(r";|&&|\|\|", line):
+                words = command.split()
+                while words and words[0] in ("then", "else", "do", "{", "(", "!"):
+                    words.pop(0)
+                if words and words[0] not in ("echo", "printf"):
+                    found.append(" ".join(words))
+        return found
+
+    @classmethod
+    def rename_faults(cls, docs):
+        faults = []
+        for workflow, doc in docs.items():
+            listings = 0
+            for step in doc["jobs"]["changes"]["steps"]:
+                for command in cls.commands(step.get("run") or ""):
+                    if cls.LISTING.search(command):
+                        listings += 1
+                        if "--no-renames" not in command.split():
+                            faults.append(f"{workflow}, job changes, step "
+                                          f"{step.get('id') or step.get('name')!r}: `{command}` "
+                                          "does not pass --no-renames")
+            if listings == 0:
+                faults.append(f"{workflow}: the changes job runs no git command that lists "
+                              "changed files (the rule read nothing)")
+        return faults
+
+    # -- rule 3: the `if:` of the validator jobs ----------------------------------
+
+    @classmethod
+    def condition_faults(cls, docs):
+        faults = []
+        for workflow, doc in docs.items():
+            triggers = doc.get("on", doc.get(True))
+            if "pull_request" not in triggers or triggers["pull_request"] is not None:
+                faults.append(f"{workflow}: pull_request is not a trigger without a filter, so a "
+                              "required check may report no status on a pull request")
+            outputs = doc["jobs"]["changes"].get("outputs") or {}
+            for job_id, (name, output, step) in cls.JOBS[workflow].items():
+                job = doc["jobs"].get(job_id)
+                if job is None:
+                    faults.append(f"{workflow}: no job {job_id}")
+                    continue
+                if job.get("name") != name:
+                    faults.append(f"{workflow}, job {job_id}: name {job.get('name')!r}, wanted "
+                                  f"{name!r} (the name of the check)")
+                if job.get("needs") not in ("changes", ["changes"]):
+                    faults.append(f"{workflow}, job {job_id}: needs {job.get('needs')!r}, "
+                                  "wanted changes")
+                wanted = "${{ steps.%s.outputs.%s }}" % (step, output)
+                if " ".join(str(outputs.get(output)).split()) != wanted:
+                    faults.append(f"{workflow}: the output {output} of the changes job is "
+                                  f"{outputs.get(output)!r}, wanted {wanted!r}")
+                try:
+                    condition = JobCondition(job.get("if", ""))
+                    for inputs in ({}, {"node_image": "kindest/node:v9.9.9@sha256:" + "0" * 64}):
+                        for case, cancelled, result, values, runs in cls.CASES:
+                            values = {output if k == "OUT" else k: v for k, v in values.items()}
+                            if inputs and job_id in cls.NODE_IMAGE_ONLY:
+                                runs = False
+                            got = condition.value({"changes": (result, values)}, inputs,
+                                                  cancelled)
+                            if got != runs:
+                                faults.append(
+                                    f"{workflow}, job {job_id}: `if: {job.get('if')}` "
+                                    f"{'runs' if got else 'skips'} the job when {case}"
+                                    f"{' (node_image given)' if inputs else ''}; wanted "
+                                    f"{'run' if runs else 'skip'}")
+                except ValueError as e:
+                    faults.append(f"{workflow}, job {job_id}: JobCondition cannot read the "
+                                  f"`if:`: {e}")
+        return faults
+
+    # -- rule 4: the lists cover what each job reads -------------------------------
+
+    @classmethod
+    def imported_modules(cls, script, root=gatelib.REPO):
+        """The Python files beside `script` that it imports, directly or through such a
+        file: each `import x` and `from x import ...` (also in a function), where x.py
+        is in the folder of the script. A dynamic import (importlib) is not followed."""
+        if (script, root) not in cls._imports:
+            cls._imports[script, root] = cls._walk_imports(script, root)
+        return cls._imports[script, root]
+
+    @staticmethod
+    def _walk_imports(script, root):
+        folder, seen, todo = os.path.dirname(script), set(), [script]
+        while todo:
+            path = todo.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            with open(os.path.join(root, path), encoding="utf-8") as fh:
+                tree = ast.parse(fh.read(), path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name.split(".")[0] for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    names = [node.module.split(".")[0]]
+                else:
+                    continue
+                for name in names:
+                    module = f"{folder}/{name}.py" if folder else f"{name}.py"
+                    if os.path.isfile(os.path.join(root, module)):
+                        todo.append(module)
+        return sorted(seen - {script})
+
+    @classmethod
+    def job_inputs(cls, workflow, job_id, doc, root=gatelib.REPO):
+        """{repository path: why}: what the job reads, as rule 4 says. A path that
+        ends with '/' is a folder."""
+        validator = cls.WORKFLOWS[workflow]
+        needed = {f".github/workflows/{workflow}": "the workflow itself"}
+        for rule in cls.rules[validator]:
+            needed[rule] = f"a rule of the MANIFEST of {validator}"
+            atomics = "atomics/" + rule.split("/")[2] + "/"
+            if os.path.isdir(os.path.join(root, atomics)):
+                needed[atomics] = f"the atomics folder of {rule}"
+        for step in doc["jobs"][job_id].get("steps") or []:
+            where = f"named by the step {step.get('name') or step.get('id')!r}"
+            for line in gatelib._command_lines(step.get("run") or ""):
+                for path in cls.REPO_PATH.findall(line):
+                    path = path.rstrip(".")
+                    full = os.path.join(root, path)
+                    if os.path.isfile(full):
+                        needed.setdefault(path, where)
+                    elif os.path.isdir(full):
+                        needed.setdefault(path.rstrip("/") + "/", where)
+                for script in cls.PYTHON_SCRIPT.findall(line):
+                    if os.path.isfile(os.path.join(root, script)):
+                        for module in cls.imported_modules(script, root):
+                            needed.setdefault(module, f"imported by {script}")
+        import yaml     # PyYAML: in detections/requirements.txt
+
+        for config in [p for p in needed if re.fullmatch(r"detections/k8s/kind-[\w.-]+\.yaml", p)]:
+            with open(os.path.join(root, config), encoding="utf-8") as fh:
+                stack = [yaml.safe_load(fh)]
+            while stack:
+                node = stack.pop()
+                if isinstance(node, dict):
+                    mount = node.get("hostPath")
+                    if isinstance(mount, str) and mount.startswith("./") \
+                            and os.path.isfile(os.path.join(root, mount[2:])):
+                        needed.setdefault(mount[2:], f"mounted by {config}")
+                    stack.extend(node.values())
+                elif isinstance(node, list):
+                    stack.extend(node)
+        return needed
+
+    @staticmethod
+    def covered(path, entries):
+        if path.endswith("/"):
+            return any(e.endswith("/") and path.startswith(e) for e in entries)
+        return any(path == e or (e.endswith("/") and path.startswith(e)) for e in entries)
+
+    @classmethod
+    def coverage_faults(cls, docs, root=gatelib.REPO, only=None):
+        """The faults of rule 4. Also: each path of APISERVER_ONLY (or `only`) is read
+        by its job and not by the other job, so the exceptions of rule 1 are true."""
+        faults = []
+        for workflow, doc in docs.items():
+            push, steps, _ = cls.lists(workflow, doc)
+            inputs = {job_id: cls.job_inputs(workflow, job_id, doc, root)
+                      for job_id in cls.JOBS[workflow]}
+            for job_id, (_, _, step) in cls.JOBS[workflow].items():
+                for path, why in sorted(inputs[job_id].items()):
+                    for where, entries in ((f"step {step}", steps.get(step, [])),
+                                           ("the push list", push)):
+                        if not cls.covered(path, entries):
+                            faults.append(f"{workflow}, {where}: no entry covers {path} ({why}; "
+                                          f"read by the job {job_id})")
+            if workflow == "validate-apiserver-detections.yml":
+                for job_id, paths in (only or cls.APISERVER_ONLY).items():
+                    other = next(j for j in inputs if j != job_id)
+                    for path in paths:
+                        if path not in inputs[job_id] or path in inputs[other]:
+                            faults.append(f"{workflow}: APISERVER_ONLY names {path} as an input "
+                                          f"of {job_id} only, but {job_id} reads it: "
+                                          f"{path in inputs[job_id]}, {other} reads it: "
+                                          f"{path in inputs[other]}")
+        return faults
+
+    # -- the tests ----------------------------------------------------------------
+
+    def assert_no_faults(self, faults, rule):
+        self.assertEqual(faults, [], f"{rule}. A fault lets a pull request skip a required "
+                         "validator that it needed (a skipped required check counts as passed)")
+
+    def test_push_and_changes_lists_agree(self):
+        self.assert_no_faults(self.sync_faults(self.docs()),
+                              "the lists of these workflows do not agree")
+
+    def test_every_listing_of_a_changes_job_passes_no_renames(self):
+        self.assert_no_faults(self.rename_faults(self.docs()),
+                              "a git command of a changes job detects renames")
+
+    def test_validator_runs_unless_the_changes_job_said_false(self):
+        self.assert_no_faults(self.condition_faults(self.docs()),
+                              "the `if:` of a validator job does not fail safe")
+
+    def test_lists_cover_what_each_validator_reads(self):
+        docs = self.docs()
+        # The rule reads what the jobs read (not vacuous): the rules of each
+        # MANIFEST, the modules of the import closure, and a mounted audit policy.
+        inputs = self.job_inputs("validate-apiserver-detections.yml", "validate",
+                                 docs["validate-apiserver-detections.yml"])
+        self.assertGreater(sum(p.startswith("detections/sigma/") for p in inputs), 30)
+        for path in ("detections/sigma_explain.py", "detections/rule_cases.py",
+                     "detections/benign_corpus.py", "atomics/T1557/",
+                     "detections/k8s/audit-policy-apiserver.yaml"):
+            self.assertIn(path, inputs)
+        self.assertIn("detections/check_sufficiency.py", self.imported_modules(
+            "detections/validate_cloud_detections.py"))
+        self.assert_no_faults(self.coverage_faults(docs),
+                              "a list of the changes job does not cover a file that its job "
+                              "reads: add the path to the list and to push: paths:")
+
+    def test_the_rules_find_a_fault_of_each_kind(self):
+        """CONTROL of the four rules: one fault planted in the text of a real workflow
+        at a time. Each rule names that fault, and each fault is found by its rule."""
+        def planted(workflow, old, new, count=1):
+            text = self.texts[workflow]
+            self.assertEqual(text.count(old), count, f"{workflow}: the anchor {old!r} of the "
+                             "CONTROL is not in the workflow: correct the CONTROL")
+            return self.docs({**self.texts, workflow: text.replace(old, new)})
+
+        cloud, k8s = "validate-cloud-detections.yml", "validate-k8s-detections.yml"
+        api = "validate-apiserver-detections.yml"
+        for rule, docs, fault in (
+                (self.rename_faults, planted(k8s, "git diff --no-renames", "git diff"),
+                 r"validate-k8s-detections\.yml, job changes, step 'f': `.*git diff --name-only"),
+                (self.rename_faults, planted(api, '--no-renames --name-only "${range}"',
+                                             '--name-only "${range}"'),
+                 r"step 'r': .* does not pass --no-renames"),
+                (self.sync_faults, planted(k8s, "            'detections/sigma/T1609/' \\\n", ""),
+                 r"'detections/sigma/T1609/' is in push: paths: and in no list"),
+                (self.sync_faults, planted(cloud, "      - 'detections/sigma_explain.py'\n", ""),
+                 r"'detections/sigma_explain\.py' is in a list of the changes job and not in push"),
+                (self.sync_faults, planted(api, "            'atomics/T1557/' \\\n", "", count=2),
+                 r"'atomics/T1557/' is in push: paths: and in no list"),
+                (self.sync_faults, planted(api, "            'atomics/T1557/' \\\n            "
+                                           "'.github/workflows/validate-apiserver-detections.yml')"
+                                           "\n          range=",
+                                           "            '.github/workflows/validate-apiserver-"
+                                           "detections.yml')\n          range="),
+                 r"step r does not hold 'atomics/T1557/' of step f"),
+                (self.sync_faults, planted(k8s, "'detections/k8s/' \\", "'detections/k8z/' \\"),
+                 r"step f: 'detections/k8z/' names no folder"),
+                (self.condition_faults, planted(
+                    cloud, "if: ${{ !cancelled() && (needs.changes.result != 'success' || "
+                           "needs.changes.outputs.relevant != 'false') }}",
+                    "if: needs.changes.outputs.relevant == 'true'"),
+                 r"validate-cloud-detections\.yml, job validate: .* skips the job when the "
+                 r"changes job failed before"),
+                (self.condition_faults, planted(cloud, "!cancelled() &&", "always() &&"),
+                 r"runs the job when the run is cancelled"),
+                (self.condition_faults, planted(api, "!cancelled() && !inputs.node_image &&",
+                                                "!cancelled() &&"),
+                 r"job validate-recommended: .* runs the job when the changes job found a file "
+                 r"that the job reads \(node_image given\)"),
+                (self.condition_faults, planted(cloud, "name: validate-cloud\n",
+                                                "name: validate-cloud-detections\n"),
+                 r"name 'validate-cloud-detections', wanted 'validate-cloud'"),
+                (self.coverage_faults, planted(k8s, "'detections/sigma_explain.py'",
+                                               "'detections/sigma_eval.py'", count=2),
+                 r"validate-k8s-detections\.yml, step f: no entry covers "
+                 r"detections/sigma_explain\.py \(imported by"),
+                (self.coverage_faults, planted(api, "'detections/rule_cases.py'",
+                                               "'detections/sigma_eval.py'", count=3),
+                 r"step r: no entry covers detections/rule_cases\.py \(imported by .*"
+                 r"validate-recommended\)"),
+                (self.coverage_faults, planted(cloud, "'.github/workflows/validate-cloud-"
+                                               "detections.yml'", "'detections/sigma_eval.py'",
+                                               count=2),
+                 r"no entry covers \.github/workflows/validate-cloud-detections\.yml \(the "
+                 r"workflow itself"),
+                (self.coverage_faults, planted(cloud, "'atomics/T1537/", "'atomics/T1537x/",
+                                               count=2),
+                 r"no entry covers atomics/T1537/ \(the atomics folder of "
+                 r"detections/sigma/T1537/"),
+                (self.coverage_faults, planted(cloud, "'detections/sigma/T1199/",
+                                               "'atomics/T1199/", count=2),
+                 r"no entry covers detections/sigma/T1199/\w+\.yml \(a rule of the MANIFEST"),
+                (self.coverage_faults, planted(
+                    "validate-staticpod-detections.yml",
+                    "'detections/k8s/audit-policy-staticpod.yaml'", "'detections/sigma_eval.py'",
+                    count=2),
+                 r"no entry covers detections/k8s/audit-policy-staticpod\.yaml \(mounted by "
+                 r"detections/k8s/kind-staticpod-cluster\.yaml"),
+                (self.coverage_faults, planted(
+                    "validate-staticpod-detections.yml", "'detections/k8s/cri-pod-sensor.sh'",
+                    "'detections/sigma_eval.py'", count=2),
+                 r"no entry covers detections/k8s/cri-pod-sensor\.sh \(named by the step")):
+            with self.subTest(rule=rule.__name__, fault=fault):
+                faults = rule(docs)
+                self.assertTrue(any(re.search(fault, f) for f in faults),
+                                f"{rule.__name__} did not name the planted fault; it gave "
+                                f"{faults}")
+        # An exception of APISERVER_ONLY that is not true: the recommended job does not
+        # read score_benign.py, and validate-apiserver reads cri-pod-sensor.sh too.
+        faults = self.coverage_faults(self.docs(), only={
+            "validate": self.APISERVER_ONLY["validate"],
+            "validate-recommended": ("detections/score_benign.py",
+                                     "detections/k8s/cri-pod-sensor.sh")})
+        self.assertEqual([f.split(" as an input")[0] for f in faults], [
+            "validate-apiserver-detections.yml: APISERVER_ONLY names detections/score_benign.py",
+            "validate-apiserver-detections.yml: APISERVER_ONLY names "
+            "detections/k8s/cri-pod-sensor.sh"])
+
+    def test_job_condition_reads_the_rules_of_github(self):
+        """CONTROL of JobCondition, on constructed expressions."""
+        failed = {"changes": ("failure", {})}
+        said_false = {"changes": ("success", {"relevant": "false"})}
+        said_true = {"changes": ("success", {"relevant": "TRUE"})}
+        for text, needs, cancelled, wanted in (
+                # The implicit success(): the old `if:` skips the job when changes failed.
+                ("needs.changes.outputs.relevant == 'true'", failed, False, False),
+                ("needs.changes.outputs.relevant == 'true'", said_true, False, True),
+                ("${{ needs.changes.outputs.relevant == 'true' }}", said_true, False, True),
+                ("always() && needs.changes.result != 'success'", failed, True, True),
+                ("!cancelled() && needs.changes.result != 'success'", failed, True, False),
+                ("failure()", failed, False, True),
+                ("success()", said_false, True, False),
+                ("!cancelled() && (needs.changes.result != 'success' || "
+                 "needs.changes.outputs.relevant != 'false')", said_false, False, False),
+                ("!cancelled() && needs.changes.result != 'success' || "
+                 "needs.changes.outputs.relevant != 'false'", said_true, True, True),
+                ("!cancelled() && needs.changes.outputs.nothing", said_true, False, False),
+                ("!cancelled() && !inputs.node_image", said_true, False, True),
+                ("!cancelled() && 'a' && ''", said_true, False, False),
+                ("!cancelled() && null == 0 && 1 == '1' && true == 1 && 'x' != 0", failed,
+                 False, True),
+                ("!cancelled() && 'it''s' == 'IT''S'", failed, False, True)):
+            with self.subTest(text=text, cancelled=cancelled):
+                self.assertIs(JobCondition(text).value(needs, {}, cancelled), wanted)
+        for text in ("contains(needs.changes.result, 'fail')", "github.event_name == 'push'",
+                     "needs.changes.result < 'z'", "needs['changes'].result",
+                     "x${{ always() }}", "(always()", "always() always()"):
+            with self.subTest(refused=text):
+                with self.assertRaises(ValueError):
+                    JobCondition(text).value(failed)
+
+    def test_a_moved_rule_selects_the_validator(self):
+        """Each changes step (step f, and step r of validate-apiserver-detections.yml),
+        run as GitHub Actions runs it, in a constructed git repository whose head moves
+        a rule out of a folder of the step's list to detections/sigma/T9999/: the
+        output is true. CONTROLs: a head that changes only README.md gives false, and
+        the same step without --no-renames gives false on the moved rule (so git in
+        this test detects renames, and --no-renames is what selects the validator)."""
+        gatelib.require_program("git", "the changes steps run git diff")
+        for workflow, jobs in self.JOBS.items():
+            doc = self.docs()[workflow]
+            for _, output, step_id in jobs.values():
+                with self.subTest(workflow=workflow, step=step_id):
+                    run = self.changes_steps(doc)[step_id]
+                    folder = next(e for e in self.patterns(run)
+                                  if re.fullmatch(r"detections/sigma/T[\d.]+/", e))
+                    tree = self.tree()
+                    env = {"GIT_DIR": tree.path(".git"), "GIT_WORK_TREE": tree.root,
+                           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+                           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+
+                    def git(*args):
+                        result = tree.run_command(["git", *args], env=env)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        return result.stdout.strip()
+
+                    git("init", "-q")
+                    tree.write("README.md", "base\n")
+                    tree.write(folder + "moved_rule.yml", "title: moved rule\n" * 20)
+                    git("add", "-A")
+                    git("commit", "-q", "-m", "base")
+                    base = git("rev-parse", "HEAD")
+                    tree.rename(folder + "moved_rule.yml", "detections/sigma/T9999/moved_rule.yml")
+                    git("add", "-A")
+                    git("commit", "-q", "-m", "move")
+                    moved = git("rev-parse", "HEAD")
+                    git("checkout", "-q", base)
+                    tree.write("README.md", "changed\n")
+                    git("commit", "-q", "-am", "readme")
+                    readme = git("rev-parse", "HEAD")
+                    step = gatelib.Step(workflow, "changes", step_id, "bash", run)
+                    renames = step._replace(run=run.replace("--no-renames ", ""))
+                    self.assertNotEqual(renames.run, run)
+                    for case, ran, head, wanted in (("moved rule", step, moved, "true"),
+                                                    ("README.md only", step, readme, "false"),
+                                                    ("moved rule, without --no-renames",
+                                                     renames, moved, "false")):
+                        out = tree.out("github/github_output")
+                        open(out, "w", encoding="utf-8").close()
+                        result = tree.run_step(ran, env={
+                            **env, "BASE_SHA": base, "HEAD_SHA": head,
+                            "EVENT_NAME": "pull_request"})
+                        self.assertEqual(result.returncode, 0, f"{case}: {result.stderr}")
+                        with open(out, encoding="utf-8") as fh:
+                            written = dict(line.split("=", 1) for line in fh.read().splitlines()
+                                           if "=" in line)
+                        self.assertEqual(written.get(output), wanted,
+                                         f"{case}: the step wrote {written}; wanted "
+                                         f"{output}={wanted}\n{result.stdout}")
 
 
 class KnownGapList(unittest.TestCase):
