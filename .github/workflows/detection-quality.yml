@@ -167,11 +167,12 @@ name: detection-quality
 # (pySigma, the runner image and the kernel drift underneath the rules).
 # schedule-freshness checks that each weekly schedule still runs and passes.
 #
-# pip cache. Most jobs that install the requirements restore pip's cache directory
-# (setup-python `cache: pip`). The key holds the exact Python version and one hash of
-# the files of `cache-dependency-path`: the requirements files that the job installs,
-# and this file when a job installs a package that only this file names
-# (google-re2). When no cache has the key, setup-python restores the newest cache of
+# pip cache. The jobs on '3.x' that install the requirements restore pip's cache
+# directory (setup-python `cache: pip`). The jobs on 3.14 have none: each package
+# that they install has a wheel for 3.14, so pip builds nothing, and when the cache
+# was added it gave them no gain (measured in its pull request, #89). The key holds
+# the exact Python version and one hash of the files of `cache-dependency-path`: the
+# requirements files that the job installs. When no cache has the key, setup-python restores the newest cache of
 # the same Python version, and a job that passed saves the cache under the key at its
 # end. A pull request run saves only for the runs of that pull request. A push,
 # schedule or dispatch run on main saves for the runs of main and of each pull
@@ -302,9 +303,6 @@ jobs:
     # once for each variant. No paths filter: it runs on every change.
     name: representation-variants
     runs-on: ubuntu-latest
-    env:
-      # Revalidate each index page that pip's cache holds (the pip cache note above).
-      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -312,11 +310,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           # google-re2 ships wheels up to cp314 (see validate-detections, sigma-lint).
+          # No pip cache on 3.14 (the pip cache note above).
           python-version: '3.14'
-          cache: pip
-          cache-dependency-path: |
-            detections/requirements.txt
-            .github/workflows/detection-quality.yml
 
       - name: Install requirements
         run: |
@@ -773,9 +768,6 @@ jobs:
     # always run them.
     name: provider-mappings
     runs-on: ubuntu-latest
-    env:
-      # Revalidate each index page that pip's cache holds (the pip cache note above).
-      PIP_REFRESH_PACKAGE: ':all:'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -831,12 +823,8 @@ jobs:
         if: steps.f.outputs.relevant == 'true'
         with:
           # google-re2 ships wheels up to cp314 (see validate-detections, sigma-lint).
+          # No pip cache on 3.14 (the pip cache note above).
           python-version: '3.14'
-          cache: pip
-          cache-dependency-path: |
-            detections/requirements.txt
-            detections/requirements-convert.txt
-            .github/workflows/detection-quality.yml
 
       - name: Install requirements (validators + conversion checks)
         if: steps.f.outputs.relevant == 'true'
