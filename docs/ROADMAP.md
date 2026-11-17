@@ -429,6 +429,7 @@ must not do them. The steps are in [`setup/`](setup/README.md).
 | Labels, the off switch, `null-safety` as a required check | `setup/repository-settings.md`, steps 1 to 5 | |
 | What 100 % coverage means | `setup/README.md`, "Decisions" | Blocks T7 |
 | Cloud sandbox accounts (optional) | `setup/cloud-sandbox.md` | Blocks the rest of R9 |
+| CI decisions of the CI audit: how often `automerge.yml` runs (77 runs a day), `validate-apiserver-recommended` on `main` only, and `gate-tests` on 2 or 3 runners (its critical path is 6 to 8 minutes) | #87, "The CI audit, in short" | |
 
 ## 5. New detections
 
