@@ -584,7 +584,8 @@ it does not see one test in the place of a different one.
   runs such a file; no test does that today. A program that a gate under test writes
   and runs is a child of the gate, not of the suite, and the lock does not cover it.
 - `PipCache` reads the workflows only. It does not see a cache that the script of a
-  step writes, a cache action on a directory above pip's (`~/.cache`), or the pip of
+  step writes, a cache action on a directory above pip's (`~/.cache`) or on a cache
+  directory that `PIP_CACHE_DIR` or `XDG_CACHE_HOME` moves, or the pip of
   a run (a pip older than 26.2 ignores `PIP_REFRESH_PACKAGE`, and asks the index for
   each page anyway). It does not find a new job that can pass without the C
   extension of PyYAML: add such a job to `PipCache.WITHOUT`. The scopes of the caches

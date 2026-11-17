@@ -28,7 +28,7 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       a job that calls a reusable workflow (the class lists it); each
                       step of the `changes` job of the four validator workflows has
                       an integer `timeout-minutes` more than 0
-    PipCache          a job that restores pip's cache makes pip ask the index again
+    PipCache          a job with a pip cache (a restore or a save) makes pip ask the index again
                       (PIP_REFRESH_PACKAGE), no workflow that an event of low trust
                       can start uses a cache, and the jobs that can pass without the
                       C extension of PyYAML have no pip cache
@@ -1806,7 +1806,8 @@ class PipCache(unittest.TestCase):
              uses again in the jobs where pySigma needs the C extension.
 
     Limits. The rules read the workflows. They do not see a cache that the script of a
-    step writes, a cache action on a directory above pip's (~/.cache), the version of
+    step writes, a cache action on a directory above pip's (~/.cache) or on a cache
+    directory that PIP_CACHE_DIR or XDG_CACHE_HOME moves, the version of
     pip of a run, or a new job that can pass without the C extension of PyYAML (add
     such a job to WITHOUT). TRUST knows cache actions, a `cache` input and the default
     cache of setup-go only (not the automatic cache of setup-node, `bundler-cache` of
@@ -1851,7 +1852,8 @@ class PipCache(unittest.TestCase):
         `cache: pip`, or a cache action with a line of `path` that names .cache/pip."""
         for step in job.get("steps") or []:
             uses, given = str(step.get("uses") or ""), step.get("with") or {}
-            if uses.startswith("actions/setup-python@") and str(given.get("cache", "")) == "pip":
+            if (uses.split("@")[0].lower() == "actions/setup-python"
+                    and str(given.get("cache", "")) == "pip"):
                 return True
             if (uses.split("@")[0].lower() in cls.CACHE_ACTIONS
                     and any(cls.PIP_DIR.search(line.strip())
@@ -1950,9 +1952,28 @@ class PipCache(unittest.TestCase):
             "save action on pip's directory, no refresh": workflow(
                 "push", "    steps:\n      - uses: actions/cache/save@v4\n"
                 "        with: {key: k, path: ~/.cache/pip/http}\n"),
+            # A pip cache of another version, a pin to a commit, a name in capitals
+            # (GitHub reads the name of an action without letter case), and a path line
+            # with a blank at its end: each one is a pip cache.
+            "setup-python v6, no refresh": workflow(
+                "push", pip.replace("actions/setup-python@v5", "actions/setup-python@v6")),
+            "setup-python pinned to a commit, no refresh": workflow(
+                "push", pip.replace("@v5", "@" + "a" * 40)),
+            "setup-python in capitals, no refresh": workflow(
+                "push", pip.replace("actions/setup-python", "Actions/Setup-Python")),
+            "cache action in capitals on pip's directory, no refresh": workflow(
+                "push", "    steps:\n      - uses: Actions/Cache@v4\n"
+                "        with: {key: k, path: ~/.cache/pip}\n"),
+            "path line of pip's directory with a blank at its end, no refresh": workflow(
+                "push", "    steps:\n      - uses: actions/cache@v4\n        with:\n          key: k\n"
+                "          path: \"~/.cache/pip \\n~/.npm\"\n"),
             "pip cache, pull_request_target": workflow("pull_request_target", refresh + pip),
             "cache action, workflow_run": workflow("{workflow_run: {workflows: [ci]}}",
                                                    "    steps:\n      - uses: actions/cache@v4\n"),
+            "cache action in capitals, workflow_run": workflow(
+                "{workflow_run: {workflows: [ci]}}", "    steps:\n      - uses: Actions/Cache@v4\n"),
+            "cache action, push and pull_request_target": workflow(
+                "[push, pull_request_target]", "    steps:\n      - uses: actions/cache@v4\n"),
             "restore action, issue_comment": workflow("issue_comment", "    steps:\n"
                                                       "      - uses: actions/cache/restore@v4\n"),
             "setup-go default, pull_request_review": workflow("pull_request_review", "    steps:\n"
