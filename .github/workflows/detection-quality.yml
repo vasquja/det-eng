@@ -1125,11 +1125,12 @@ jobs:
         # then holds the output of every class. The script writes the job summary
         # itself (the result and the list of known gaps), also when a test fails
         # and when a test module does not import. A run also fails when the test
-        # of a known gap of its shard did not run: a gap whose test a class of the
-        # shard collects, or whose test no class of the suite collects (such a gap
-        # fails each shard, as it fails a run of the whole suite). The counts of
-        # each class come from its TestResult, not from the text that unittest
-        # prints, so they do not depend on the Python version that `3.x` gives.
+        # of a known gap of its shard (a gap whose test a class of the shard
+        # collects) did not run, and when no class of the suite collects the
+        # marked test of a known gap, also when that test ran: such a gap fails
+        # each shard and a run of the whole suite. The counts of each class come
+        # from its TestResult, not from the text that unittest prints, so they do
+        # not depend on the Python version that `3.x` gives.
         # No pipe: the step's exit code is the script's.
         run: |
           python3 -B detections/tests/gatelib.py --run --no-skips \
