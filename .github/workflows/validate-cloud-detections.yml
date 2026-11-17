@@ -86,7 +86,8 @@ jobs:
           # Exact file paths, or directory prefixes ending in '/'. Mirror of the
           # push: paths: list above (keep the two in sync when adding a technique).
           # The gate test test_suite.ValidatorSelection checks that the two lists
-          # hold the same paths, and that they hold each file that the validator reads.
+          # hold the same paths and the inputs that rule 4 of the class names (its
+          # docstring says what the class does not see).
           patterns=$(printf '%s\n' \
             'detections/cloud/' \
             'detections/sigma/T1552.005/' \

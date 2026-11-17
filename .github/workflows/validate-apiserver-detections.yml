@@ -221,7 +221,8 @@ jobs:
           # list above without the two recommended-policy files (step r's inputs
           # only). When adding a technique, add its prefixes here, to step r and to
           # push: paths:. The gate test test_suite.ValidatorSelection checks the
-          # three lists, and that they hold each file that the validator reads.
+          # three lists, and that they hold the inputs that rule 4 of the class names
+          # (its docstring says what the class does not see).
           patterns=$(printf '%s\n' \
             'detections/k8s/audit-policy-apiserver.yaml' \
             'detections/k8s/kind-apiserver-cluster.yaml' \
