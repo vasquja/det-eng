@@ -481,8 +481,8 @@ def gap_report(gaps=None, markdown=False, states=False):
 
     states  True after a run of the suite: say for each gap if its test saw the
             gap open in that run (`open`), or did not run (`not run`). After a run
-            of one shard (`--shard K/N`), a gap whose test is in another shard J is
-            `in shard J/N`."""
+            of one shard (`--shard K/N`), a gap whose test only the classes of
+            other shards collect is `in shard J/N` (`in shards J/N and L/N`)."""
     gaps = _sorted_gaps(gaps)
     if markdown:
         lines = [f"### Known gaps of the gates ({len(gaps)})", "",
@@ -499,7 +499,7 @@ def gap_report(gaps=None, markdown=False, states=False):
     for g in gaps:
         lines += [f"  {g.id}", f"      gate:   {g.gate}", f"      today:  {g.today}",
                   f"      closes: {g.closes} ({ROADMAP[g.closes]})"]
-        lines += [f"      state:  {g.state}" + (", not in this run" if g.state.startswith("in shard ")
+        lines += [f"      state:  {g.state}" + (", not in this run" if _in_other_shards(g)
                                                 else " in this run")] if states else []
         lines += [f"      reason: {g.reason}", f"      test:   {g.test}"]
     return "\n".join(lines) + "\n"
@@ -1307,9 +1307,17 @@ _ONE_CLASS = (
     "sys.exit(0 if result.wasSuccessful() else 1)\n")
 
 
-def _discover():
+def _discover(gap_classes=None):
     """{`module.Class`: number of tests} of every test class under TESTS. A test
-    module that does not import is an error: its tests would silently not run."""
+    module that does not import is an error: its tests would silently not run.
+
+    gap_classes  a dict: _discover() adds {gap id: the set of `module.Class` that
+                 collect the test of the gap} for each known gap whose test
+                 discovery collects. A test that a class inherits (from a mixin
+                 that is no TestCase, or from another TestCase) is collected by each
+                 TestCase that holds it, and a class that overrides the test without
+                 the marker does not collect the gap. A gap whose test no class
+                 collects is not in the dict."""
     loader = unittest.TestLoader()
     suite = loader.discover(TESTS, pattern="test_*.py", top_level_dir=TESTS)
     if loader.errors:
@@ -1323,6 +1331,13 @@ def _discover():
             else:
                 name = test.id().rsplit(".", 1)[0]
                 classes[name] = classes.get(name, 0) + 1
+                if gap_classes is not None:
+                    # The method that this class runs for the test: a marked one
+                    # holds its Gap (known_gap()).
+                    method = getattr(type(test), getattr(test, "_testMethodName", ""), None)
+                    gap = getattr(method, "known_gap", None)
+                    if isinstance(gap, Gap):
+                        gap_classes.setdefault(gap.id, set()).add(name)
 
     walk(suite)
     return classes
@@ -1394,9 +1409,18 @@ def _shard(text):
     return int(found.group(1)), int(found.group(2))
 
 
-def _gap_class(gap):
-    """The `module.Class` of the test of a known gap."""
-    return gap.test.rsplit(".", 1)[0]
+def _other_shards(parts, shards):
+    """The state of a known gap whose test only the classes of the shards `parts`
+    collect: `in shard 2/3`, `in shards 1/3 and 3/3`."""
+    names = [f"{part}/{shards}" for part in sorted(parts)]
+    return (f"in shard {names[0]}" if len(names) == 1
+            else f"in shards {', '.join(names[:-1])} and {names[-1]}")
+
+
+def _in_other_shards(gap):
+    """True when a run of one shard did not count the gap: no class of the shard
+    collects its test, and a class of another shard does (_other_shards())."""
+    return gap.state.startswith(("in shard ", "in shards "))
 
 
 def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skips=False,
@@ -1420,11 +1444,15 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
     Sets the state of each known gap that a test saw open in this run. Returns 0
     only when every class ran all of its tests and none failed, and, for a run of
     the whole suite or of a shard, when the test of every known gap of that run
-    ran. The known gaps of a shard are those whose test is in a class of the
-    shard, and those whose test is in no class of the suite (each shard fails for
-    them); a gap whose test is in another shard J is `in shard J/N`.
+    ran. The classes that collect the test of a gap are those of _discover(): a
+    test on a mixin is collected by each TestCase that inherits it. The known gaps
+    of a shard are those whose test a class of the shard collects, and those whose
+    test no class of the suite collects (each shard fails for them, as the run of
+    the whole suite does). A gap whose test only the classes of other shards
+    collect is `in shard J/N`, and does not fail the shard.
     """
-    found = _discover()
+    gap_classes = {}
+    found = _discover(gap_classes)
     classes = collections.OrderedDict(
         (name, count) for name, count in found.items()
         if not only or any(word in name for word in only))
@@ -1438,8 +1466,12 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
         home = {name: part for part, names in enumerate(parts, 1) for name in names}
         classes = collections.OrderedDict((name, found[name]) for name in parts[number - 1])
         if not classes:
-            print(f"shard {number}/{shards} holds no test class: the suite has {len(found)} "
-                  "test class(es)", file=out)
+            empty = (f"shard {number}/{shards} holds no test class: the suite has "
+                     f"{len(found)} test class(es)")
+            print(empty, file=out)
+            if summary:
+                with open(summary, "a", encoding="utf-8") as fh:
+                    fh.write(f"{_heading(shard, False)}\n\n{empty}.\n")
             return 1
         weight = _weights_of(classes, weights)
         start_order = sorted(classes, key=lambda name: (-weight[name], name))
@@ -1481,7 +1513,7 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
         return (name, code, ran, skipped, time.monotonic() - start, text)
 
     start = time.monotonic()
-    failed, skips, total = [], collections.OrderedDict(), 0
+    failed, skips, total, spent = [], collections.OrderedDict(), 0, 0.0
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             # The pool starts the classes in start_order, and the output comes in the
@@ -1493,6 +1525,7 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
                     # unittest.SkipTest in setUpClass: every test of the class is skipped.
                     ran = skipped = classes[name]
                 total += ran
+                spent += seconds
                 verdict = "ok"
                 if code == "timeout":
                     verdict = f"FAILED (stopped after {timeout:g} s)"
@@ -1520,8 +1553,12 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
               f"{time.monotonic() - start:.1f} s")
     notes = []
     if shard:
+        # The seconds of the classes of the shard in this run beside those of the
+        # table: when they drift apart, update the table (README.md, "CI").
         counts = (f"shard {number}/{shards}: {len(classes)} of {len(found)} test class(es), "
-                  f"{total} test(s), {jobs} at a time, {time.monotonic() - start:.1f} s")
+                  f"{total} test(s), {jobs} at a time, {time.monotonic() - start:.1f} s; the "
+                  f"seconds of its classes: {spent:.1f} in this run, "
+                  f"{sum(weight.values()):.1f} in {os.path.basename(CLASS_SECONDS)}")
         notes.append(f"classes of shard {number}/{shards}: {', '.join(classes)}")
     if skips:
         notes.append(f"{sum(skips.values())} test(s) skipped: "
@@ -1534,24 +1571,25 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
     # A run of the whole suite in which no class failed must see every known gap
     # open. A gap whose test did not run is not tested at all: its marker is on a
     # method that unittest does not collect, or in a class that is no TestCase. (A
-    # test that was skipped is counted above: its class is in `skips`.) A run of a
-    # shard counts the gaps whose test is in a class of the shard, and those whose
-    # test is in no class of the suite: no shard runs these, so each shard fails.
+    # test that was skipped is counted above: a class that collects it is in
+    # `skips`.) A run of a shard counts the gaps whose test a class of the shard
+    # collects, and those whose test no class of the suite collects: no shard runs
+    # these, so each shard fails, as the run of the whole suite does.
     if shard:
         for gap in KNOWN_GAPS.values():
-            part = home.get(_gap_class(gap))
-            if part is not None and part != number:
-                gap.state = f"in shard {part}/{shards}"
+            parts = {home[name] for name in gap_classes.get(gap.id, ())}
+            if parts and number not in parts:
+                gap.state = _other_shards(parts, shards)
     not_run = [] if only or failed else sorted(
         gap.id for gap in KNOWN_GAPS.values()
-        if gap.state == "not run" and _gap_class(gap) not in skips)
+        if gap.state == "not run" and not gap_classes.get(gap.id, set()) & skips.keys())
     if not_run:
         notes.append("FAILED: the test of these known gap(s) did not run: " + ", ".join(not_run))
     code = 1 if failed or not_run or (skips and no_skips) else 0
     print("\n" + "\n".join([counts] + notes + (["OK"] if code == 0 else [])), file=out)
     if summary:
         still_open = sum(1 for gap in KNOWN_GAPS.values() if gap.state == "open")
-        elsewhere = sum(1 for gap in KNOWN_GAPS.values() if gap.state.startswith("in shard "))
+        elsewhere = sum(1 for gap in KNOWN_GAPS.values() if _in_other_shards(gap))
         with open(summary, "a", encoding="utf-8") as fh:
             fh.write(f"{_heading(shard, code == 0)}\n\n{counts}; {len(KNOWN_GAPS)} known gap(s)"
                      + (f", {len(KNOWN_GAPS) - elsewhere} of them in this shard" if shard else "")
