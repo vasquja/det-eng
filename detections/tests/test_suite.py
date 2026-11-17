@@ -20,8 +20,9 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
     ValidatorSelection  the four validator workflows select their validator fail
                       safe: the push list and the changes-job lists agree, each git
                       diff of a changes job passes --no-renames, a validator job runs
-                      when its changes job did not succeed, and the lists cover each
-                      file that the job reads (JobCondition reads the `if:` of a job)
+                      when its changes job did not succeed, and the lists cover the
+                      inputs of the job that rule 4 of the class names (JobCondition
+                      reads the `if:` of a job)
     KnownGapList      every @known_gap names an item of section 1 of docs/ROADMAP.md,
                       and no open gap names an item that is `done`
     PlantedArtifacts  every file under known_bad/ is planted by a test, and none has
@@ -823,7 +824,14 @@ class ValidatorSelection(gatelib.GateCase):
     The rules read text. They do not see a file that a program reads by a name that
     it builds at run time, a step that a different job runs, or the list of
     detections/k8s/ in validate-k8s-detections.yml, which is wider than what the job
-    reads (a wider list only runs the validator more often)."""
+    reads (a wider list only runs the validator more often). Two examples of what a
+    job reads and rule 4 does not see: the files that score_benign.py reads in the
+    soft shadow step of validate-apiserver (detections/benign/budgets.json, the
+    corpus slices, detections/RULE_DEFECTS.md and the rule files outside the lists;
+    the step is in SoftSteps.SHADOW and cannot change the verdict of the job), and
+    the entries of detections/ and detections/sigma/ that the import guard of
+    sigma_eval.py lists (the required rule-cases job, which runs on each pull
+    request, imports sigma_eval too)."""
 
     PARTS = ()      # the tests read the repository; the git test uses an empty tree
 
