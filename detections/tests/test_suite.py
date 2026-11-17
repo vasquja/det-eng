@@ -1372,6 +1372,10 @@ class ValidatorSelection(gatelib.GateCase):
                     run = self.changes_steps(doc)[step_id]
                     folder = next(e for e in self.patterns(run)
                                   if re.fullmatch(r"detections/sigma/T[\d.]+/", e))
+                    self.assertFalse(self.covered("detections/sigma/T9999/moved_rule.yml",
+                                                  self.patterns(run)),
+                                     "the list covers the target of the move: the test "
+                                     "needs a target outside the list")
                     tree = self.tree()
                     env = {"GIT_DIR": tree.path(".git"), "GIT_WORK_TREE": tree.root,
                            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
