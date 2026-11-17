@@ -1420,8 +1420,8 @@ def gap_shards(gap_classes, parts):
     gap}: each shard that holds a class that collects the test of the gap. The test
     of the gap runs in each of these shards. `gap_classes` is that of _discover(),
     `parts` the shards of shard_classes(). A gap whose test no class collects is not
-    in the result: no shard counts it, because the runner cannot tell which shard
-    runs its test (run_suite() fails each run for it)."""
+    in the result, because the runner cannot tell which shard runs its test:
+    run_suite() counts such a gap in each shard and fails each run for it."""
     home = {name: number for number, names in enumerate(parts, 1) for name in names}
     return {gap_id: {home[name] for name in names} for gap_id, names in gap_classes.items()}
 
