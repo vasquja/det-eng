@@ -847,6 +847,8 @@ class ValidatorSelection(gatelib.GateCase):
         ("the changes job failed after its step wrote 'false'", False, "failure",
          {"OUT": "false"}, True),
         ("the changes job ended as cancelled, and the run goes on", False, "cancelled", {}, True),
+        ("the changes job ended as cancelled after its step wrote 'false'", False, "cancelled",
+         {"OUT": "false"}, True),
         ("the changes job was skipped", False, "skipped", {}, True),
         ("the changes job found a file that the job reads", False, "success", {"OUT": "true"}, True),
         ("the changes job found no file that the job reads", False, "success",
