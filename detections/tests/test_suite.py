@@ -1946,7 +1946,7 @@ class PipCache(unittest.TestCase):
                 "env: {PIP_REFRESH_PACKAGE: ':all:'}\n"),
             "cache action on pip's directory, no refresh": workflow(
                 "push", "    steps:\n      - uses: actions/cache@v4\n        with:\n          key: k\n"
-                "          path: |\n            ~/.npm\n            ~/.cache/pip\n"),
+                "          path: |\n            ~/.npm\n            ~/.cache/pip\n            ~/.cargo\n"),
             "save action on pip's directory, no refresh": workflow(
                 "push", "    steps:\n      - uses: actions/cache/save@v4\n"
                 "        with: {key: k, path: ~/.cache/pip/http}\n"),
