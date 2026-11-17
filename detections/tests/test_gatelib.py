@@ -812,11 +812,14 @@ class Runner(unittest.TestCase):
                             ({"cpu": -0.5}, None), ({"cpu": "1.5"}, None), ({"cpu": True}, None),
                             ({"cpu": None}, None), ({"cpu": [1.0]}, None),
                             ({"cpu": float("nan")}, None), ({"cpu": float("inf")}, None),
+                            ({"cpu": 10 ** 400}, None), ({"cpu": -0.0}, 0.0),
                             ([1.0], None), ("cpu", None), (None, None)):
             with self.subTest(counts=counts):
                 self.assertEqual(gatelib._cpu_seconds(counts), cpu)
                 if cpu is not None:
                     self.assertIs(type(gatelib._cpu_seconds(counts)), float)
+                    # Not -0.0, which prints as `CPU -0.0 s`.
+                    self.assertFalse(str(gatelib._cpu_seconds(counts)).startswith("-"))
 
     def test_a_failing_class_fails_the_run(self):
         tree = self.suite()
@@ -1210,11 +1213,13 @@ class Shards(unittest.TestCase):
         "    def setUpClass(cls):\n"
         "        with open(os.environ['SHARD_ORDER'], 'a', encoding='utf-8') as fh:\n"
         "            fh.write(cls.__module__ + '.' + cls.__name__ + '\\n')\n"
-        "        seconds = float(os.environ.get('SHARD_BURN', '0'))\n"
-        "        if seconds:\n"
-        "            burn(seconds)\n"
+        "        own = float(os.environ.get('SHARD_BURN', '0'))\n"
+        "        child = float(os.environ.get('SHARD_CHILD_BURN', '0'))\n"
+        "        if own:\n"
+        "            burn(own)\n"
+        "        if child:\n"
         "            subprocess.run([sys.executable, '-B', '-c',\n"
-        "                            f'import recorded; recorded.burn({seconds!r})'],\n"
+        "                            f'import recorded; recorded.burn({child!r})'],\n"
         "                           check=True)\n"
         "        time.sleep(float(os.environ.get('SHARD_SLEEP', '0')))\n")
     GAPPY = (
@@ -1267,14 +1272,16 @@ class Shards(unittest.TestCase):
         tree.write("detections/tests/class_seconds.json",
                    doc if isinstance(doc, str) else json.dumps(doc))
 
-    def run_shard(self, tree, shard, *options, burn=0, sleep=0):
+    def run_shard(self, tree, shard, *options, burn=0, child=None, sleep=0):
         """(result, the classes in the order they started) of a run of one shard. Each
-        class of Recorded burns `burn` seconds of CPU in its process and as many in a
-        child process, and then sleeps `sleep` seconds."""
+        class of Recorded burns `burn` seconds of CPU in its process and `child`
+        seconds (default: `burn`) in a child process that it waits for, and then
+        sleeps `sleep` seconds."""
         order = tree.out("order.txt")
         open(order, "w", encoding="utf-8").close()
         result = tree.run("detections/tests/gatelib.py", "--run", "--shard", shard, *options,
                           env={"SHARD_ORDER": order, "SHARD_BURN": str(burn),
+                               "SHARD_CHILD_BURN": str(burn if child is None else child),
                                "SHARD_SLEEP": str(sleep)})
         with open(order, encoding="utf-8") as fh:
             return result, fh.read().split()
@@ -1425,6 +1432,23 @@ class Shards(unittest.TestCase):
                 # It is more than the CPU of any one class by more than the rounding.
                 # Kills: X = the CPU of the last class (or of any one class).
                 self.assertGreater(spent, max(cpus) + rounding)
+        # Each part of the CPU on its own: 0.6 s only in the class process, then 0.6 s
+        # only in a child. A class process alone needs about 0.1 s (it imports the
+        # test module), so each line is between 0.6 and 0.6 + LIMIT s.
+        limit = 0.4
+        for own, child in ((0.6, 0), (0, 0.6)):
+            with self.subTest(own=own, child=child):
+                result, _started = self.run_shard(tree, "2/2", "--jobs", "3", burn=own,
+                                                  child=child)
+                gatelib.assert_accepts(result, self.CPU_IN_THIS_RUN.format(jobs="3", without=""))
+                cpus = [float(cpu) for _wall, cpu in re.findall(self.CLASS_LINE, result.stdout)]
+                self.assertEqual(len(cpus), 3)
+                # Kills: RUSAGE_SELF counted two times in place of RUSAGE_CHILDREN (the
+                # own-only run gives about 1.4 s, the child-only run about 0.2 s), and
+                # RUSAGE_CHILDREN two times in place of RUSAGE_SELF (about 0 s and
+                # about 1.2 s).
+                self.assertGreaterEqual(min(cpus), 0.6 - 0.05)
+                self.assertLessEqual(max(cpus), 0.6 + limit)
 
     def test_a_class_without_a_cpu_time_is_named_and_left_out_of_the_sum(self):
         """A class whose process wrote no CPU seconds: its line says `CPU not known`,
@@ -1482,9 +1506,29 @@ class Shards(unittest.TestCase):
         self.assertRegex(text, r"(?m)^## Gate tests, shard 2/2: FAILED$")
         self.assertRegex(text, r"(?m)^shard 2/2: .* in this run \(2 class\(es\) without a CPU "
                                r"time\), 12\.0 by class_seconds\.json; 1 known gap\(s\), ")
+        # A class that fails an assertion still writes its counts: its line has its
+        # CPU, and the sum holds it. One class (Light) is then without a CPU time.
+        tree.replace("detections/tests/test_one.py", "        os._exit(0)\n",
+                     "        self.fail('planted failure')\n")
+        result, _started = self.run_shard(tree, "2/2", "--jobs", "3", burn=0.1)
+        # crash_ok: the output of the class holds the traceback of its failure.
+        gatelib.assert_rejects(result, r"^FAILED: 1 test class\(es\): test_one\.AlsoGood$",
+                               exit_code=1, crash_ok=True)
+        failing = re.search(r"(?m)^===== test_one\.AlsoGood: FAILED \(exit code 1\), "
+                            r"1 test\(s\), [0-9.]+ s \(CPU ([0-9.]+) s\)$", result.stdout)
+        self.assertIsNotNone(failing, result.stdout)
+        cpus = [float(cpu) for _wall, cpu in re.findall(self.CLASS_LINE, result.stdout)]
+        self.assertEqual(len(cpus), 1)          # test_one.Good
+        cpus.append(float(failing.group(1)))
+        line = self.CPU_IN_THIS_RUN.format(jobs="3",
+                                           without=r" \(1 class\(es\) without a CPU time\)")
+        spent = float(re.search(line, result.stdout).group(1))
+        self.assertAlmostEqual(spent, sum(cpus), delta=0.15)
+        self.assertGreater(spent, max(cpus) + 0.05)
         # CONTROL: the same classes, with the CPU seconds of each: no class without
         # a CPU time, and the run passes.
-        tree.replace("detections/tests/test_one.py", "        os._exit(0)\n", "        pass\n")
+        tree.replace("detections/tests/test_one.py", "        self.fail('planted failure')\n",
+                     "        pass\n")
         tree.replace("detections/tests/test_two.py", "        atexit.register(drop_cpu, "
                      "sys.argv[2])\n", "        pass\n")
         result, _started = self.run_shard(tree, "2/2", "--jobs", "3")

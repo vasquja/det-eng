@@ -1319,9 +1319,15 @@ def _cpu_seconds(counts):
     None when they are not known: no counts (the class was stopped, or its process
     died), no value `cpu`, or a value that is not a finite number >= 0."""
     value = counts.get("cpu") if isinstance(counts, dict) else None
-    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+    if type(value) not in (int, float):
         return None
-    return float(value)
+    try:
+        value = float(value)
+    except OverflowError:       # an int that no float can hold
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value + 0.0          # -0.0 gives 0.0
 
 
 def _discover(gap_classes=None):
@@ -1609,10 +1615,10 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
         # The CPU seconds of the classes of the shard in this run beside those of
         # the table: when they drift apart, update the table (README.md, "CI"). CPU
         # seconds and not wall seconds: a class takes longer when heavy classes run
-        # beside it, but it needs about the same CPU. The sum holds only the classes
-        # whose CPU is known, and the line gives the number of the others. A class
-        # that the table does not hold weighs the default (_weights_of()), and the
-        # line gives the number of such classes.
+        # beside it, and its CPU grows much less than its wall time. The sum holds
+        # only the classes whose CPU is known, and the line gives the number of the
+        # others. A class that the table does not hold weighs the default
+        # (_weights_of()), and the line gives the number of such classes.
         this_run = f"{cpu_spent:.1f} in this run" + (
             f" ({no_cpu} class(es) without a CPU time)" if no_cpu else "")
         missing = [name for name in classes if name not in weights]
