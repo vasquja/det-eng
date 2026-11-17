@@ -742,6 +742,14 @@ print(json.dumps({
         {"a": {"b": {"c": "y"}}, "a.b.c": "x"})], "a.b.c", "x"),
     "one field from two keys, inside an object": probe([sigma_eval.flatten(
         {"a": {"b.c": "x", "b": {"c": "y"}}})], "a.b.c", "x"),
+    "one field from two keys, the later a list": probe([sigma_eval.flatten(
+        {"a": {"b": "x"}, "a.b": ["y"]})], "a.b", "x"),
+    "one field from two keys, the nested later a list": probe([sigma_eval.flatten(
+        {"a.b": "x", "a": {"b": ["y"]}})], "a.b", "x"),
+    "two fields from two keys each": probe([sigma_eval.flatten(
+        {"a.b": 1, "a": {"b": 2}, "c.d": 1, "c": {"d": 2}})], "a.b", 1),
+    "two fields from two keys each, the dotted keys later": probe([sigma_eval.flatten(
+        {"a": {"b": 1}, "a.b": 2, "c": {"d": 1}, "c.d": 2})], "a.b", 1),
     "a dotted key and another field": probe([sigma_eval.flatten(
         {"a.b": "x", "a": {"c": "y"}})], "a.b", "x"),
     "the flat fields of a dotted key and another field": sigma_eval.flatten(
@@ -775,7 +783,8 @@ class EventTableKeys(gatelib.GateCase):
         one field a.b, and keeps only the last value: a record could hide a value under
         the other key. The flat event names the field (a FieldTwice), and the table
         refuses it with an EventError that names the event and the field: in each order
-        of the two keys, and in a nested object. A dotted key beside an object that
+        of the two keys, in a nested object, and when the later value is a list. With
+        two such fields, it names the first. A dotted key beside an object that
         gives another field is no problem: the table reads both fields."""
         text = "two keys of the record give the one field {!r} (sigma_eval.flatten keeps " \
                "only one value)"
@@ -785,6 +794,14 @@ class EventTableKeys(gatelib.GateCase):
                      "event 1 of 1: " + text.format("a.b.c"))
         self.refused("one field from two keys, inside an object", 0, ["a.b.c"],
                      "event 1 of 1: " + text.format("a.b.c"))
+        # A list value is one field of JSON text: as the later key, and in the object.
+        for name in ("one field from two keys, the later a list",
+                     "one field from two keys, the nested later a list"):
+            self.refused(name, 0, ["a.b"], "event 1 of 1: " + text.format("a.b"))
+        # Two such fields in one record: the text names the first (FieldTwice.field).
+        for name in ("two fields from two keys each",
+                     "two fields from two keys each, the dotted keys later"):
+            self.refused(name, 0, ["a.b"], "event 1 of 1: " + text.format("a.b"))
         self.assertEqual(self.probes["a dotted key and another field"], [[0]])
         self.assertEqual(self.probes["the flat fields of a dotted key and another field"],
                          {"a.b": "x", "a.c": "y"})
