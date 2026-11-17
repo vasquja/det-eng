@@ -431,7 +431,9 @@ the two timeouts.
   value says how it was measured, and a comment beside a value gives the reason
   when it is not plain.
 - pip's cache (class `PipCache`; the pip cache note at the top of
-  `detection-quality.yml`). A job that restores pip's cache sets
+  `detection-quality.yml`). A job has a pip cache when a step of it is
+  setup-python with `cache: pip`, or `actions/cache` (also its `restore` or `save`
+  action) with a line of `path` that names a `.cache/pip` directory. Such a job sets
   `PIP_REFRESH_PACKAGE` to `:all:`: from pip 26.2, pip uses a cached page of the
   index for up to 600 s, and the variable makes it ask the index again. No
   workflow that an event of low trust can start (`pull_request_target`,
@@ -582,10 +584,17 @@ it does not see one test in the place of a different one.
   runs such a file; no test does that today. A program that a gate under test writes
   and runs is a child of the gate, not of the suite, and the lock does not cover it.
 - `PipCache` reads the workflows only. It does not see a cache that the script of a
-  step writes, or the pip of a run (a pip older than 26.2 ignores
-  `PIP_REFRESH_PACKAGE`, and asks the index for each page anyway). It does not find
-  a new job that can pass without the C extension of PyYAML: add such a job to
-  `PipCache.WITHOUT`. The scopes of the caches are GitHub's: no test shows them.
+  step writes, a cache action on a directory above pip's (`~/.cache`), or the pip of
+  a run (a pip older than 26.2 ignores `PIP_REFRESH_PACKAGE`, and asks the index for
+  each page anyway). It does not find a new job that can pass without the C
+  extension of PyYAML: add such a job to `PipCache.WITHOUT`. The scopes of the caches
+  are GitHub's: no test shows them.
+  Its rule on the workflows of low trust knows cache actions, a `cache` input and the
+  default cache of setup-go only (not the automatic cache of setup-node,
+  `bundler-cache` of setup-ruby, `enable-cache` of setup-uv or a `gha` cache of
+  docker). Its rule on `cache-mode` is the guarantee: GitHub gives such a run
+  read-only access to the caches of the default branch unless a `cache-mode` that
+  writes is set. By choice, the rule also refuses a restore in such a workflow.
 - A gate that needs a host or a cluster runs only in its offline modes: the dry
   runs, the negative-control steps on logs that the test writes, and the verdict
   code of the Linux validator on canned events. The live runs stay in the

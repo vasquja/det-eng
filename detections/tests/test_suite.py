@@ -1783,13 +1783,16 @@ class PipCache(unittest.TestCase):
     """pip's cache (setup-python `cache: pip`; the pip cache note at the top of
     detection-quality.yml). A run with a restored cache must install the versions that
     a run without one installs, and only a trusted run may write a cache that the
-    other runs restore. Three rules, for every job of every workflow:
+    other runs restore. A job has a pip cache when a step of it is setup-python with
+    `cache: pip`, or a cache action (actions/cache, actions/cache/restore or
+    actions/cache/save) with a line of `path` that names a .cache/pip directory
+    (pip_cache()). Three rules, for every job of every workflow:
 
-    REFRESH  A job that restores pip's cache sets PIP_REFRESH_PACKAGE to ':all:' (in
-             the `env:` of the job or of its workflow), and no step of it sets another
-             value. From pip 26.2, pip uses a cached page of the index for up to 600 s
-             (PyPI's Cache-Control) and sends no request. With the variable, pip asks
-             the index again for each page.
+    REFRESH  A job with a pip cache sets PIP_REFRESH_PACKAGE to ':all:' (in the `env:`
+             of the job or of its workflow; the value of the job wins), and no step of
+             it sets another value. From pip 26.2, pip uses a cached page of the index
+             for up to 600 s (PyPI's Cache-Control) and sends no request. With the
+             variable, pip asks the index again for each page.
     TRUST    A workflow that an event of low trust can start (a trigger that is not in
              TRUSTED: pull_request_target, workflow_run, issue_comment, ...) has no
              step that uses a cache (a cache action, or a `cache` input of a setup
@@ -1803,8 +1806,14 @@ class PipCache(unittest.TestCase):
              uses again in the jobs where pySigma needs the C extension.
 
     Limits. The rules read the workflows. They do not see a cache that the script of a
-    step writes, the version of pip of a run, or a new job that can pass without the C
-    extension of PyYAML (add such a job to WITHOUT)."""
+    step writes, a cache action on a directory above pip's (~/.cache), the version of
+    pip of a run, or a new job that can pass without the C extension of PyYAML (add
+    such a job to WITHOUT). TRUST knows cache actions, a `cache` input and the default
+    cache of setup-go only (not the automatic cache of setup-node, `bundler-cache` of
+    setup-ruby, `enable-cache` of setup-uv or a `gha` cache of docker): its rule on
+    `cache-mode` is the guarantee, because GitHub gives such a run read-only access to
+    the caches of the default branch unless a `cache-mode` that writes is set. By
+    choice, TRUST also refuses a restore in such a workflow."""
 
     # The triggers that may write the caches of the default branch (GitHub's list), and
     # pull_request, whose caches are only for the runs of the same pull request.
@@ -1833,11 +1842,22 @@ class PipCache(unittest.TestCase):
             cache = True if cache is None else cache
         return "cache" in action or (cache not in (None, False) and str(cache).lower() not in ("", "false"))
 
-    @staticmethod
-    def pip_cache(job):
-        return any(str(step.get("uses") or "").startswith("actions/setup-python@")
-                   and str((step.get("with") or {}).get("cache", "")) == "pip"
-                   for step in job.get("steps") or [])
+    CACHE_ACTIONS = {"actions/cache", "actions/cache/restore", "actions/cache/save"}
+    PIP_DIR = re.compile(r"(?:^|/)\.cache/pip(?:/|$)")     # ~/.cache/pip, ~/.cache/pip/http
+
+    @classmethod
+    def pip_cache(cls, job):
+        """True when a step of the job restores or saves pip's cache: setup-python with
+        `cache: pip`, or a cache action with a line of `path` that names .cache/pip."""
+        for step in job.get("steps") or []:
+            uses, given = str(step.get("uses") or ""), step.get("with") or {}
+            if uses.startswith("actions/setup-python@") and str(given.get("cache", "")) == "pip":
+                return True
+            if (uses.split("@")[0].lower() in cls.CACHE_ACTIONS
+                    and any(cls.PIP_DIR.search(line.strip())
+                            for line in str(given.get("path") or "").splitlines())):
+                return True
+        return False
 
     @classmethod
     def faults(cls, docs):
@@ -1902,9 +1922,18 @@ class PipCache(unittest.TestCase):
             "cache false, low trust": workflow("workflow_run", "    steps:\n"
                                                "      - uses: actions/setup-go@v5\n"
                                                "        with: {cache: false}\n"),
+            "cache 'false' (a text), low trust": workflow("workflow_run", "    steps:\n"
+                                                          "      - uses: actions/setup-go@v5\n"
+                                                          "        with: {cache: 'false'}\n"),
             "write mode, trusted": workflow("push", "    cache-mode: write\n" + refresh + pip),
             "read mode, low trust": workflow("pull_request_target", "    cache-mode: read\n"
-                                             "    steps:\n      - run: echo\n")}
+                                             "    steps:\n      - run: echo\n"),
+            # Not a pip cache, so no refresh is necessary.
+            "cache pipenv": workflow("pull_request", "    steps:\n      - uses: actions/setup-python@v5\n"
+                                     "        with: {python-version: '3.x', cache: pipenv}\n"),
+            "cache action on other directories": workflow(
+                "push", "    steps:\n      - uses: actions/cache@v4\n        with:\n          key: k\n"
+                "          path: |\n            ~/.cache/pip-tools\n            ~/.npm\n")}
         bad = {
             "no refresh": workflow("pull_request", pip),
             "refresh of one package": workflow("pull_request", "    env: {PIP_REFRESH_PACKAGE: pyyaml}\n"
@@ -1912,6 +1941,15 @@ class PipCache(unittest.TestCase):
             "a step switches refresh off": workflow(
                 "pull_request", refresh + pip + "      - run: pip install -r r.txt\n"
                 "        env: {PIP_REFRESH_PACKAGE: ':none:'}\n"),
+            "the job env switches refresh off": workflow(
+                "pull_request", "    env: {PIP_REFRESH_PACKAGE: ':none:'}\n" + pip,
+                "env: {PIP_REFRESH_PACKAGE: ':all:'}\n"),
+            "cache action on pip's directory, no refresh": workflow(
+                "push", "    steps:\n      - uses: actions/cache@v4\n        with:\n          key: k\n"
+                "          path: |\n            ~/.npm\n            ~/.cache/pip\n"),
+            "save action on pip's directory, no refresh": workflow(
+                "push", "    steps:\n      - uses: actions/cache/save@v4\n"
+                "        with: {key: k, path: ~/.cache/pip/http}\n"),
             "pip cache, pull_request_target": workflow("pull_request_target", refresh + pip),
             "cache action, workflow_run": workflow("{workflow_run: {workflows: [ci]}}",
                                                    "    steps:\n      - uses: actions/cache@v4\n"),
@@ -1927,11 +1965,15 @@ class PipCache(unittest.TestCase):
         faults = {case: self.faults({"w.yml": doc}) for case, doc in {**good, **bad}.items()}
         self.assertEqual([case for case in names if faults[case]], list(bad), faults)
         self.assertEqual([case for case in bad if len(faults[case]) != 1], [], faults)
-        # A job of WITHOUT with a pip cache (and the refresh) is a fault of its own.
+        # A job of WITHOUT with a pip cache (and the refresh) is a fault of its own: the
+        # cache of setup-python, and a restore action on pip's directory.
         name, job_id = sorted(self.WITHOUT)[0]
-        doc = yaml.safe_load(f"on: pull_request\njobs:\n  {job_id}:\n    runs-on: x\n{refresh}{pip}")
-        self.assertEqual(len(self.faults({name: doc})), 1)
-        self.assertRegex(self.faults({name: doc})[0], r"without the C extension of PyYAML")
+        restore = ("    steps:\n      - uses: actions/cache/restore@v4\n"
+                   "        with: {key: k, path: ~/.cache/pip}\n")
+        for steps in (pip, restore):
+            doc = yaml.safe_load(f"on: pull_request\njobs:\n  {job_id}:\n    runs-on: x\n{refresh}{steps}")
+            self.assertEqual(len(self.faults({name: doc})), 1, steps)
+            self.assertRegex(self.faults({name: doc})[0], r"without the C extension of PyYAML")
 
     def test_the_workflows_keep_the_rules(self):
         docs = self.workflows()
