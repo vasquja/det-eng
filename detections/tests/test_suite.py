@@ -631,8 +631,9 @@ class JobCondition:
     for a job of `needs` that its own job-level `timeout-minutes` stops. That job
     ends as "cancelled", and if cancelled() is then true in a job that needs it,
     `!cancelled()` skips that job. A step that hits its step-level
-    `timeout-minutes` fails (the runner logs "The action has timed out." and marks
-    the step as failed). Thus a changes job whose steps all have a step timeout
+    `timeout-minutes` fails: the runner (actions/runner, StepsRunner.cs) logs "The
+    action '<name>' has timed out after <N> minutes." and marks the step as failed.
+    Thus a changes job whose steps all have a step timeout
     ends a hang as a failure, and for a failure the `if:` of each validator job
     runs the validator."""
 
@@ -804,7 +805,9 @@ class ValidatorSelection(gatelib.GateCase):
        --no-renames. Without it, a rule moved out of a listed folder gives only its
        new path, and the validator is skipped. A test runs each changes step in a
        constructed git repository to show that, and to show that a step whose git
-       diff fails writes true.
+       diff fails writes true. The step gets its `env:` from the workflow (each
+       `${{ }}` from a table of the event), for a pull request, a push and a
+       scheduled run.
     3. The `if:` of each validator job runs it unless the changes job succeeded and
        said `false`: it runs when the changes job failed (or ended in another way, or
        wrote no output), and not when the run is cancelled (`!cancelled()`, not
@@ -818,8 +821,8 @@ class ValidatorSelection(gatelib.GateCase):
        file of the validator's MANIFEST and MISS_MANIFEST (check_sufficiency.py reads
        their paths), the atomics folder of each rule folder, each local Python
        module that a script of the job imports (also inside a function; a dynamic
-       import is not followed), each file of the repository that a step of the job
-       names, each file that a kind config of the job mounts, and the workflow.
+       import is not followed), each path under detections/, atomics/ or .github/
+       that a step of the job names, each file that a kind config of the job mounts, and the workflow.
 
     The rules read text. They do not see a file that a program reads by a name that
     it builds at run time, a step that a different job runs, or the list of
@@ -1389,7 +1392,11 @@ class ValidatorSelection(gatelib.GateCase):
         the same step without --no-renames gives false on the moved rule (so git in
         this test detects renames, and --no-renames is what selects the validator).
         The step also fails safe: with a BASE_SHA that names no commit of the
-        repository, its git diff fails, and the output is true."""
+        repository, its git diff fails, and the output is true. The environment of
+        the step comes from its `env:` in the workflow, with a value for each
+        `${{ }}` from a table of the event (an expression that the table does not
+        hold fails the test), and a push of the moved rule and a scheduled run give
+        true too."""
         gatelib.require_program("git", "the changes steps run git diff")
         for workflow, jobs in self.JOBS.items():
             doc = self.docs()[workflow]
@@ -1437,17 +1444,38 @@ class ValidatorSelection(gatelib.GateCase):
                                                 f"{lost}...{moved}"], env=env)
                     self.assertNotEqual(listing.returncode, 0,
                                         f"git diff of {lost}...{moved} did not fail")
-                    for case, ran, start, head, wanted in (
-                            ("moved rule", step, base, moved, "true"),
-                            ("README.md only", step, base, readme, "false"),
-                            ("moved rule, without --no-renames", renames, base, moved, "false"),
-                            ("the git listing fails (BASE_SHA names no commit)", step, lost,
-                             moved, "true")):
+                    step_env = next(s for s in doc["jobs"]["changes"]["steps"]
+                                    if s.get("id") == step_id).get("env") or {}
+                    pr = lambda start, head: {
+                        "github.event_name": "pull_request",
+                        "github.event.pull_request.base.sha": start,
+                        "github.event.pull_request.head.sha": head,
+                        "github.event.before": "", "github.sha": head}
+                    for case, ran, event, wanted in (
+                            ("moved rule", step, pr(base, moved), "true"),
+                            ("README.md only", step, pr(base, readme), "false"),
+                            ("moved rule, without --no-renames", renames, pr(base, moved), "false"),
+                            ("the git listing fails (BASE_SHA names no commit)", step,
+                             pr(lost, moved), "true"),
+                            ("a push of the moved rule", step, {
+                                "github.event_name": "push",
+                                "github.event.pull_request.base.sha": "",
+                                "github.event.pull_request.head.sha": "",
+                                "github.event.before": base, "github.sha": moved}, "true"),
+                            ("a scheduled run", step, {
+                                "github.event_name": "schedule",
+                                "github.event.pull_request.base.sha": "",
+                                "github.event.pull_request.head.sha": "",
+                                "github.event.before": "", "github.sha": moved}, "true")):
+                        values = {}
+                        for name, text in step_env.items():
+                            found = re.fullmatch(r"\$\{\{\s*([\w.]+)\s*\}\}", str(text))
+                            self.assertTrue(found and found.group(1) in event,
+                                            f"env {name}: {text!r} is not modelled")
+                            values[name] = event[found.group(1)]
                         out = tree.out("github/github_output")
                         open(out, "w", encoding="utf-8").close()
-                        result = tree.run_step(ran, env={
-                            **env, "BASE_SHA": start, "HEAD_SHA": head,
-                            "EVENT_NAME": "pull_request"})
+                        result = tree.run_step(ran, env={**env, **values})
                         self.assertEqual(result.returncode, 0, f"{case}: {result.stderr}")
                         with open(out, encoding="utf-8") as fh:
                             written = [line for line in fh.read().splitlines()
