@@ -1320,10 +1320,14 @@ class ValidatorSelection(gatelib.GateCase):
     def test_job_condition_reads_the_rules_of_github(self):
         """CONTROL of JobCondition, on constructed expressions."""
         failed = {"changes": ("failure", {})}
+        failed_true = {"changes": ("failure", {"relevant": "true"})}
         said_false = {"changes": ("success", {"relevant": "false"})}
         said_true = {"changes": ("success", {"relevant": "TRUE"})}
         for text, needs, cancelled, wanted in (
-                # The implicit success(): the old `if:` skips the job when changes failed.
+                # The implicit success(): an `if:` without a status function skips the
+                # job when a job of `needs` failed, whatever the rest says.
+                ("needs.changes.result != 'success'", failed, False, False),
+                ("needs.changes.outputs.relevant == 'true'", failed_true, False, False),
                 ("needs.changes.outputs.relevant == 'true'", failed, False, False),
                 ("needs.changes.outputs.relevant == 'true'", said_true, False, True),
                 ("${{ needs.changes.outputs.relevant == 'true' }}", said_true, False, True),
@@ -1338,6 +1342,9 @@ class ValidatorSelection(gatelib.GateCase):
                 ("!cancelled() && needs.changes.outputs.nothing", said_true, False, False),
                 ("!cancelled() && !inputs.node_image", said_true, False, True),
                 ("!cancelled() && 'a' && ''", said_true, False, False),
+                # `&&` and `||` give one of their operands, not true or false.
+                ("!cancelled() && ('a' && 'b') == 'b'", said_true, False, True),
+                ("!cancelled() && ('' || 'x') == 'x'", said_true, False, True),
                 ("!cancelled() && null == 0 && 1 == '1' && true == 1 && 'x' != 0", failed,
                  False, True),
                 ("!cancelled() && 'it''s' == 'IT''S'", failed, False, True)):
@@ -1404,11 +1411,11 @@ class ValidatorSelection(gatelib.GateCase):
                             "EVENT_NAME": "pull_request"})
                         self.assertEqual(result.returncode, 0, f"{case}: {result.stderr}")
                         with open(out, encoding="utf-8") as fh:
-                            written = dict(line.split("=", 1) for line in fh.read().splitlines()
-                                           if "=" in line)
-                        self.assertEqual(written.get(output), wanted,
+                            written = [line for line in fh.read().splitlines()
+                                       if line.startswith(output + "=")]
+                        self.assertEqual(written, [f"{output}={wanted}"],
                                          f"{case}: the step wrote {written}; wanted "
-                                         f"{output}={wanted}\n{result.stdout}")
+                                         f"{output}={wanted}, one time\n{result.stdout}")
 
 
 class KnownGapList(unittest.TestCase):
