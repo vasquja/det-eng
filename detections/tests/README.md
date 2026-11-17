@@ -254,9 +254,9 @@ class RuleCases(gatelib.GateCase):
   that it should reject, the case is a known gap.
 - **Stay fast.** Each shard of CI must run in less than four minutes on a CI
   runner (predicted from the seconds of the classes on 2026-11-17: less than three
-  and a half). No class can be in two shards, so
-  the heaviest class (`test_quality.ScoreBenign`, two to three minutes) is the
-  least time of its shard: keep each class well below that.
+  and a half). No class can be in two shards, so the heaviest class
+  (`test_quality.ScoreBenign`, two to three minutes) is the least time of its
+  shard: keep each class well below that.
   Give each gate its own test class: `gatelib.py --run` runs the classes at the
   same time. For a gate that needs several seconds for one run, start the runs
   of the class together (see below).
