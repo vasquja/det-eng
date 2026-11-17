@@ -202,7 +202,9 @@ name: automerge
 # list is judged "not relevant" and its behavioral validation is skipped (the rule is
 # still Sigma-compiled by the always-on `sigma-lint`). Keep each validator's
 # `push: paths:` and its `changes`-job pattern list in sync when adding a technique,
-# as the TRR flow does (and, per rail 8, a human approves that PR).
+# as the TRR flow does (and, per rail 8, a human approves that PR). The gate test
+# test_suite.ValidatorSelection (job gate-tests) checks the sync, and it fails a PR
+# whose rule of a validator's MANIFEST is in no list of that validator.
 #
 # Requirements (one-time): "Allow auto-merge" on the repo; repository Actions
 # permission allowing read/write workflow tokens (Settings -> Actions -> General ->

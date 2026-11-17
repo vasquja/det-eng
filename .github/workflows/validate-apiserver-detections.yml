@@ -106,6 +106,8 @@ on:
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
+      # sigma_explain.py imports rule_cases.py (for its self-test).
+      - 'detections/rule_cases.py'
       - 'detections/requirements.txt'
       - 'atomics/T1098.006/**'
       - 'atomics/T1053.007/**'
@@ -218,7 +220,9 @@ jobs:
           # Exact file paths, or directory prefixes ending in '/'. The push: paths:
           # list above without the two recommended-policy files (step r's inputs
           # only). When adding a technique, add its prefixes here, to step r and to
-          # push: paths:.
+          # push: paths:. The gate test test_suite.ValidatorSelection checks the
+          # three lists, and that they hold the inputs that rule 4 of the class names
+          # (its docstring says what the class does not see).
           patterns=$(printf '%s\n' \
             'detections/k8s/audit-policy-apiserver.yaml' \
             'detections/k8s/kind-apiserver-cluster.yaml' \
@@ -248,6 +252,7 @@ jobs:
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
             'detections/requirements.txt' \
             'atomics/T1098.006/' \
             'atomics/T1053.007/' \
@@ -268,7 +273,9 @@ jobs:
             'atomics/T1557/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
-          if ! changed="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
+          # --no-renames: a file that moved gives its old path and its new path, so a
+          # rule moved out of a listed folder still selects the validator.
+          if ! changed="$(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}" 2>/dev/null)"; then
             echo "git diff failed; running the validator to be safe."
             echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -333,6 +340,7 @@ jobs:
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
+            'detections/rule_cases.py' \
             'detections/requirements.txt' \
             'atomics/T1098.006/' \
             'atomics/T1053.007/' \
@@ -365,8 +373,9 @@ jobs:
             echo "${EVENT_NAME}: running the recommended-policy job."
             echo "recommended=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          # Fail safe: if the diff cannot be computed, run the job.
-          if ! changed="$(git diff --name-only "${range}" 2>/dev/null)"; then
+          # Fail safe: if the diff cannot be computed, run the job. --no-renames, as
+          # in step f.
+          if ! changed="$(git diff --no-renames --name-only "${range}" 2>/dev/null)"; then
             echo "git diff ${range} failed; running the recommended-policy job to be safe."
             echo "recommended=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -388,7 +397,10 @@ jobs:
   validate:
     name: validate-apiserver
     needs: changes
-    if: needs.changes.outputs.relevant == 'true'
+    # Skip only when the changes job succeeded and found no relevant file. When the
+    # changes job failed, the validator runs: a skipped required check counts as
+    # passed. !cancelled() (not always()) lets a cancelled run stop here.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
     env: &apiserver-job-env
       # Each emulation appends one line per procedure (window + exit status) here; the
@@ -1051,15 +1063,18 @@ jobs:
   # policy.
   #
   # NOT a required check. It runs when its inputs change (the `recommended` output of
-  # changes-apiserver), on the weekly schedule, and on a manual dispatch with the pinned
-  # node image; the version matrix's dispatches (a node_image input) skip it. A red run
-  # still makes this workflow's run red (the README badge on a scheduled run, and
-  # check_schedule_freshness.py). The steps it shares with validate-apiserver are YAML
-  # aliases (*name) of that job's steps (&name), so the two jobs run the same steps.
+  # changes-apiserver) or when changes-apiserver fails, on the weekly schedule, and on a
+  # manual dispatch with the pinned node image; the version matrix's dispatches (a
+  # node_image input) skip it. A red run still makes this workflow's run red (the README
+  # badge on a scheduled run, and check_schedule_freshness.py). The steps it shares with
+  # validate-apiserver are YAML aliases (*name) of that job's steps (&name), so the two
+  # jobs run the same steps.
   validate-recommended:
     name: validate-apiserver-recommended
     needs: changes
-    if: needs.changes.outputs.recommended == 'true' && !inputs.node_image
+    # As validate-apiserver: skip only when the changes job succeeded and step r found
+    # no input of this job, and also on a dispatch with a node_image input.
+    if: ${{ !cancelled() && !inputs.node_image && (needs.changes.result != 'success' || needs.changes.outputs.recommended != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env: *apiserver-job-env
