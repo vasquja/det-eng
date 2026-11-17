@@ -101,7 +101,8 @@ jobs:
     # Each step has a timeout. A step that hangs fails at its timeout, so the job
     # ends as a failure, not as a cancel, and the validator that needs this job runs
     # (the fail-safe condition of the validator jobs). The timeout of the job cancels
-    # the job; it is larger than the sum of the timeouts of the steps.
+    # the job; it is larger than the sum of the timeouts of the steps, with the post
+    # step of actions/checkout, which runs with the 5 minutes of its step too.
     timeout-minutes: 15
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
