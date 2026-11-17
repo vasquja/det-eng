@@ -252,10 +252,10 @@ class GateTestShards(unittest.TestCase):
     (gatelib.gap_shards(), which the runner uses) are the shards that hold a class
     that collects its test: the test of a gap runs in each shard that holds a class
     that collects it, so in one shard or more. The partition is the same in two
-    processes with different hash seeds, and for the classes in another order. Each entry of the table names a class of the suite (a
-    class that was renamed or removed must leave the table) and gives it a number of
-    seconds above 0. A class that the table does not hold weighs the median: add it
-    after its first run in CI."""
+    processes with different hash seeds, and for the classes in another order. Each
+    entry of the table names a class of the suite (a class that was renamed or
+    removed must leave the table) and gives it a number of seconds above 0. A class
+    that the table does not hold weighs the median: add it after its first run in CI."""
 
     # What the processes print: the classes of the suite in the order of discovery,
     # the table, the classes that collect the test of each known gap, and for each N

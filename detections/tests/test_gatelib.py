@@ -1293,6 +1293,19 @@ class Shards(unittest.TestCase):
         self.assertGreaterEqual(min(each), 0.3)
         self.assertAlmostEqual(spent, sum(each), delta=rounding)
         self.assertGreater(spent, max(each) + rounding)
+        # The same when the classes run at the same time (CI runs 4 at a time): the
+        # seconds of the classes, not the wall time of the run, which is about that of
+        # one class here.
+        parallel, _ = self.run_shard(tree, "2/2", "--jobs", "3", sleep=0.3)
+        gatelib.assert_accepts(parallel, r"^shard 2/2: 3 of 5 test class\(es\), 4 test\(s\), "
+                                         r"3 at a time, ")
+        each = [float(seconds) for seconds in
+                re.findall(r"(?m)^===== \S+: ok, \d+ test\(s\), ([0-9.]+) s$", parallel.stdout)]
+        spent = float(re.search(r"(?m)classes: ([0-9.]+) in this run, ", parallel.stdout).group(1))
+        self.assertEqual(len(each), 3)
+        self.assertGreaterEqual(min(each), 0.3)
+        self.assertAlmostEqual(spent, sum(each), delta=rounding)
+        self.assertGreater(spent, max(each) + rounding)
         self.assertRegex(result.stdout, r"(?m)^classes of shard 2/2: test_one\.AlsoGood, "
                                         r"test_one\.Good, test_two\.Light$")
         self.assertRegex(result.stdout, r"(?m)^OK$")
