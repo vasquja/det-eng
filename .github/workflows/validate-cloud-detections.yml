@@ -66,6 +66,7 @@ jobs:
   changes:
     name: changes-cloud
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
     steps:
@@ -147,6 +148,7 @@ jobs:
     # passed. !cancelled() (not always()) lets a cancelled run stop here.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

@@ -116,6 +116,7 @@ jobs:
   changes:
     name: changes-staticpod
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
     steps:
@@ -182,6 +183,10 @@ jobs:
     # passed. !cancelled() (not always()) lets a cancelled run stop here.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
+    # The bounded waits of the job (kind, kubectl wait, the retries of the pre-pull,
+    # the polls of the emulation) add up to about 20 minutes. A run takes 2 to 3
+    # minutes.
+    timeout-minutes: 30
     env:
       # Each emulated procedure appends one line (its window + exit status); the
       # validator binds each procedure gate to its window (--ledger). Job-level so

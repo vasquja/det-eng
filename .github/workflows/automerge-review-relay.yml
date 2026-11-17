@@ -29,6 +29,7 @@ jobs:
   relay:
     name: relay
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Relay the review to automerge
         run: echo "A review changed; automerge re-evaluates this pull request from main's copy (workflow_run)."

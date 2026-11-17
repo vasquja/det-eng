@@ -199,6 +199,7 @@ jobs:
   changes:
     name: changes-apiserver
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
       recommended: ${{ steps.r.outputs.recommended }}
@@ -402,6 +403,12 @@ jobs:
     # passed. !cancelled() (not always()) lets a cancelled run stop here.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
+    # The bounded waits of the job (kind, kubectl wait, the retries of the pre-pull,
+    # the 15 minutes of the benign step, the waits of the emulation scripts) add up
+    # to about 50 minutes, and a run takes 5 to 6 minutes. So a slow run ends on its
+    # own, with its summary and its logs, and this timeout stops a run that hangs. It
+    # is the timeout of validate-recommended too.
+    timeout-minutes: 60
     env: &apiserver-job-env
       # Each emulation appends one line per procedure (window + exit status) here; the
       # validator binds each procedure gate to its window with --ledger (C1-3).

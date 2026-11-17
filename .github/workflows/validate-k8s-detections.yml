@@ -98,6 +98,7 @@ jobs:
   changes:
     name: changes-k8s
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       relevant: ${{ steps.f.outputs.relevant }}
     steps:
@@ -160,6 +161,10 @@ jobs:
     # passed. !cancelled() (not always()) lets a cancelled run stop here.
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relevant != 'false') }}
     runs-on: ubuntu-latest
+    # The emulate step has 15 minutes, and the other bounded waits (kind, kubectl
+    # wait, the retries of the pre-pull) add up to about 7 minutes. A run takes
+    # about 2 minutes.
+    timeout-minutes: 30
     env:
       # Each emulated procedure appends one line (its window + exit status); the
       # validator binds each procedure gate to its window (--ledger). Job-level so
