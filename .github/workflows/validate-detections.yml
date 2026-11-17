@@ -28,9 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No pip cache in this job: only setup-python gives one, and a setup-python
-      # step puts its own python3 first on PATH, so the venv below would not be on
-      # the system Python.
+      # No pip cache in this job. The jobs with a pip cache get it through
+      # setup-python only, and a setup-python step puts its own python3 first on
+      # PATH, so the venv below would not be on the system Python. An actions/cache
+      # step on ~/.cache/pip would keep PATH; that is a separate change.
       - name: Install audit, build tools and validator requirements
         run: |
           bash .github/scripts/apt_install.sh auditd gcc python3-venv

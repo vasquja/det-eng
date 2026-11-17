@@ -191,7 +191,9 @@ name: detection-quality
 # with the cache fails without it, and a job that fails saves no cache. Two jobs
 # can pass without the C extension: schedule-freshness (it needs PyYAML only) and
 # benign-linux-live (a scorer error only warns). They have no cache. external-records
-# has none either (a cache there is the owner's decision).
+# has none either (a cache there is the owner's decision). Without a cache, it is the
+# job that builds PyYAML and imports pySigma cold in each run, so a later cache there
+# must be weighed against the loss of that cold check.
 
 on:
   push:
