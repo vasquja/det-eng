@@ -4,6 +4,10 @@ name: validate-cloud-detections
 # EKS access-entry backdoor) without a live cloud:
 #   a recorded, schema-faithful attack log -> the paired Sigma rule, run by pySigma,
 #   matches it; and the benign baseline -> the same rule matches nothing.
+#   The benign baseline must also be hard: a near-miss or a filtered record of the rule
+#   that differs from the attack in a discriminating field (roadmap item R2e). That
+#   check reads SURFACE_FIELDS and CHOKEPOINT of check_sufficiency.py, so that file
+#   (and rule_cases.py, which it imports) is in the two path lists below.
 #
 # Cloud has no free CI target, so each technique ships committed CloudTrail / Entra /
 # Azure-Activity / GCP-Audit fixtures (an ATTACK set and a hard BENIGN baseline) under
@@ -30,6 +34,8 @@ on:
       - 'detections/validate_cloud_detections.py'
       - 'detections/sigma_eval.py'
       - 'detections/sigma_explain.py'
+      - 'detections/check_sufficiency.py'
+      - 'detections/rule_cases.py'
       - 'detections/requirements.txt'
       - 'atomics/T1552.005/**'
       - 'atomics/T1078.004/**'
@@ -94,6 +100,8 @@ jobs:
             'detections/validate_cloud_detections.py' \
             'detections/sigma_eval.py' \
             'detections/sigma_explain.py' \
+            'detections/check_sufficiency.py' \
+            'detections/rule_cases.py' \
             'detections/requirements.txt' \
             'atomics/T1552.005/' \
             'atomics/T1078.004/' \

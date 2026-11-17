@@ -37,19 +37,40 @@ with `NEGATIVE CONTROL VACUOUS`. Each fails the run (exit 1),
 also with --report. The count is the number of records that load_fixture() returns,
 which is the set that the rule is run on (no filter stands between the file and the
 rule): `[]`, a file of zero bytes or of blank lines, and an envelope with an empty
-list (`{"Records": []}`) hold no record. The run does not fail a baseline whose
-records are all far from the rule (`[{}]` passes); the grading line below is
-informational.
+list (`{"Records": []}`) hold no record.
+
+A baseline that holds records must also be HARD (roadmap item R2e): one record or
+more must be a near-miss or a filtered negative of the rule (sigma_explain.NON_TRIVIAL)
+through a flip item that
+  (a) some marked attack hit (a record of the attack fixture that fires the rule and
+      carries the marker) differs from the record on: the item, which reads one
+      field, holds on the one and fails on the other;
+  (b) is a filter, or reads a field outside check_sufficiency.SURFACE_FIELDS, or
+      belongs to a rule in check_sufficiency.CHOKEPOINT; and
+  (c) if it is a filter, does not hold on the record only through documentation
+      addresses (RFC 5737, RFC 3849): such an allowlist entry is a placeholder for
+      the operator's own ranges, so a record that only it filters proves nothing.
+For a correlation rule the unit is the event set, and only a near-miss on a base
+atom (base:<ref>) counts: a repair of the group-by, the timespan, the order or the
+threshold moves the same events. A baseline without such a record gives a FAIL row
+with `NEGATIVE CONTROL NOT HARD`, and a baseline that sigma_explain cannot grade a
+FAIL row with `NEGATIVE CONTROL NOT GRADED` (fail closed). Each fails the run (exit
+1), also with --report. A benign hit on the only hard record leaves no hard record,
+so that row is NOT HARD too, also with --report. The check compares with the marked
+attack hits: a rule that has none fails for its attack, and its baseline is not
+judged.
 
 A MANIFEST entry whose rule file does not exist is PENDING: the run prints it, does
 not count it, and does not fail on it. (check_sufficiency.py fails that tree.)
 
-The benign baseline is the control, and it is built to be HARD: it hits the same
-log source / method / structural fields as the attack and differs only on the
-discriminating field (the off-instance source IP, the identity type, the FIC issuer,
-the public vs specific principal, the pinned vs wildcard OIDC subject), so a PASS
-proves the rule keys on the technique's chokepoint and not on the fixture's shape or
-marker.
+The benign baseline is the control. It is built to hit the same log source / method /
+structural fields as the attack and to differ only on the discriminating field (the
+off-instance source IP, the identity type, the FIC issuer, the public vs specific
+principal, the pinned vs wildcard OIDC subject). The HARD check (above) asks it for
+one such record: one flip from firing, through a discriminating item on which a
+marked attack hit differs. It does not check each record, or each branch of the
+rule. So a PASS shows that the rule keys on that item, not only on the fixture's
+shape or marker.
 
 One exception: the TRR9013 managed-identity FIC rule reads the Azure Activity Log,
 which carries no issuer/subject, so that rule is a broad signal with no field to
@@ -62,7 +83,9 @@ Modes:
     --report        Report misses instead of failing on them. A miss is a rule that
                     did not fire on a marked record of its attack fixture, or that
                     fired on a benign record. --report does not waive a missing
-                    fixture or a benign baseline that holds no record.
+                    fixture, or a benign baseline that holds no record, holds no
+                    hard record (also when the rule fires on the only hard record)
+                    or cannot be graded.
     --json PATH     Also write a machine-readable report (status, detail and the
                     explanation lines of every rule) to PATH.
 
@@ -70,25 +93,41 @@ A failing rule is explained beneath its FAIL line (sigma_explain.py): an attack
 miss shows each detection block's per-item counts and the attack records that
 came closest, item by item; a marker-gate miss shows the gate's fields and their
 values on the hits; a benign hit shows the record and why the rule fired on it.
-Every rule also gets one informational line grading its benign records (how many
-are near-misses, filtered look-alikes, distant or trivial) and how many of the
-rule's condition atoms they exercise.
+Every rule also gets one line grading its benign records (how many are near-misses,
+filtered look-alikes, distant or trivial) and how many of the rule's condition atoms
+they exercise; the hard-baseline check reads that grade. A NOT HARD row also names
+each near-miss or filtered flip that does not count, and why.
 """
 
 import argparse
 import glob
+import ipaddress
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sigma_eval  # noqa: E402
-try:  # explanations are optional: a broken sigma_explain must never break a verdict
+# sigma_explain explains a failure and grades each benign baseline. The grade decides
+# the hard-baseline check, so a sigma_explain that does not import fails each row as
+# NOT GRADED (fail closed); the run still judges every rule.
+try:
     import sigma_explain  # noqa: E402
+    _EXPLAIN_ERROR = None
 except Exception as _e:  # noqa: BLE001
     sigma_explain = None
-    print(f"[diag] no explanations: sigma_explain failed to import "
-          f"({type(_e).__name__}: {_e})")
+    _EXPLAIN_ERROR = f"sigma_explain failed to import: {type(_e).__name__}: {_e}"
+    print(f"[diag] no explanations: {_EXPLAIN_ERROR}")
+# The hard-baseline check counts what R2 of check_sufficiency.py counts as
+# discriminating: SURFACE_FIELDS and CHOKEPOINT. There is no import cycle:
+# check_sufficiency.py imports this module only inside load_manifests().
+try:
+    import check_sufficiency  # noqa: E402
+    _SUFFICIENCY_ERROR = None
+except Exception as _e:  # noqa: BLE001
+    check_sufficiency = None
+    _SUFFICIENCY_ERROR = f"check_sufficiency failed to import: {type(_e).__name__}: {_e}"
+    print(f"[diag] no hard-baseline check: {_SUFFICIENCY_ERROR}")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIGMA = os.path.join(REPO, "detections", "sigma")
@@ -248,11 +287,14 @@ MANIFEST = [
     #     it lands in the Azure Activity Log (Microsoft.Authorization/roleAssignments/write),
     #     the same log as the TRR9013 managed-identity FIC rule above. The role + scope are
     #     only on the START record, in properties.requestbody (a JSON string), so the rule
-    #     fires on resultType '^start' -- the opposite of TRR9013's filter_start. The hard
-    #     benign (benign.json) is a Terraform grant of the non-privileged Key Vault Secrets
-    #     User role at a Key Vault (resource-group) scope, differing from the attack only on
-    #     the requestbody RoleDefinitionId + Scope. The marker 'trr9036-attacker' sits in
-    #     identity.claims.name, which the rule does not read (the rule keys on requestbody).
+    #     fires on resultType '^start' -- the opposite of TRR9013's filter_start. The benign
+    #     baseline (benign.json) holds a Terraform grant of the non-privileged Key Vault
+    #     Secrets User role at a Key Vault (resource-group) scope (records #0 and #1: they
+    #     differ in the role and the scope, so they grade distant), and the hard record #2:
+    #     the attack's Start record with the Owner role changed to Reader: of the values
+    #     that the rule tests, only the role (requestbody RoleDefinitionId) differs. The marker
+    #     'trr9036-attacker' sits in identity.claims.name, which the rule does not read
+    #     (the rule keys on requestbody).
     ("TRR9036", "T1098.003", "azure_privileged_role_assignment.yml",
      "trr9036/attack.json", "trr9036/benign.json", "Azure",
      "privileged built-in role assigned at subscription / management-group scope",
@@ -664,12 +706,13 @@ def summarize(record):
 
 
 def load_rule(path):
-    """(sigma_explain's view of the rule, []) or (None, [why it could not load])."""
+    """(sigma_explain's view of the rule, None) or (None, why it could not load)."""
+    if sigma_explain is None:
+        return None, _EXPLAIN_ERROR
     try:
-        return sigma_explain.load(path), []
+        return sigma_explain.load(path), None
     except Exception as e:  # noqa: BLE001
-        return None, [f"(no explanation: sigma_explain could not load the rule: "
-                      f"{type(e).__name__}: {e})"]
+        return None, f"sigma_explain could not load the rule: {type(e).__name__}: {e}"
 
 
 def explained(fn, *args):
@@ -716,8 +759,114 @@ def explain_benign_hits(rule, benign, hit_idx):
     return lines
 
 
-def grade_benign(rule, benign):
-    """Grade every benign record against the rule: (one-line summary, details)."""
+# Documentation address ranges: RFC 5737 (IPv4) and RFC 3849 (IPv6). An allowlist
+# entry in one of them is a placeholder for the operator's own ranges (the rules mark
+# such entries PLACEHOLDERS), so a record that only such an entry filters proves
+# nothing about a real environment.
+DOCUMENTATION_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32"))
+
+
+def documentation_address(value):
+    """Is `value` an address or a network inside a documentation range?"""
+    try:
+        net = ipaddress.ip_network(str(value).strip(), strict=False)
+    except ValueError:
+        return False
+    return any(net.version == doc.version and net.subnet_of(doc) for doc in DOCUMENTATION_NETS)
+
+
+def placeholder_only(rule, atom, record):
+    """The documentation addresses of the filter item `atom`, when the item holds on
+    `record` only through them; else []. The item is compiled again without those
+    values and run on the record."""
+    item = rule.item_detection[atom]["_item"]
+    key, values = next(iter(item.items())) if isinstance(item, dict) else (None, item)
+    values = values if isinstance(values, list) else [values]
+    docs = [v for v in values if documentation_address(v)]
+    if not docs:
+        return []
+    real = [v for v in values if not documentation_address(v)]
+    if real:
+        detection = {"_item": {key: real} if key is not None else real, "condition": "_item"}
+        sql = sigma_explain._compile_doc({"title": f"{rule.title} [{atom}, no documentation "
+                                                   "address]",
+                                          "logsource": rule.logsource, "detection": detection})
+        if sigma_eval.EventTable([record]).hit_indices(sql):
+            return []
+    return [str(v) for v in docs]
+
+
+def flip_not_counted(rule, atom, record, held, attack_held, chokepoint):
+    """Why the flip item `atom` of a near-miss or filtered benign record does not make
+    the baseline hard, or None when it does. `held` is the truth of the item on the
+    record, and `attack_held` its truth on each marked attack hit. The item counts when
+    (a) some marked attack hit differs from the record on the field that the item
+    reads: the item holds on the one and not on the other, (b) the item is a filter,
+    reads a field outside check_sufficiency.SURFACE_FIELDS, or belongs to a rule in
+    check_sufficiency.CHOKEPOINT, and (c) a filter item does not hold on the record
+    only through documentation addresses."""
+    field = rule.item_field.get(atom)
+    is_filter = atom in rule.negated_atoms()
+    if not (is_filter or field not in check_sufficiency.SURFACE_FIELDS or chokepoint):
+        return (f"it reads {field}, a surface field (check_sufficiency.SURFACE_FIELDS), and "
+                "the rule is not in CHOKEPOINT")
+    if all(h == held for h in attack_held):
+        # A near-miss of a branch that the attack does not use, or a filter item that
+        # also holds on the attack: the record tests nothing that the attack depends on.
+        shown = f"{field}={_short(record.get(field), 60)}" if field else "a keyword item"
+        return (f"the item {'holds' if held else 'fails'} on it and on every marked attack "
+                "hit, so no attack hit differs from it on the field that the item reads "
+                f"({shown} here)")
+    if is_filter:
+        docs = placeholder_only(rule, atom, record)
+        if docs:
+            return (f"the filter holds on it only through documentation addresses "
+                    f"({', '.join(docs)}), a placeholder for the operator's own ranges")
+    return None
+
+
+def judge_hard(rule, key, benign, verdicts, ours):
+    """(hard, counted, not counted) of a graded baseline. hard is None when the rule
+    has no marked attack hit to compare with (the row fails for the attack)."""
+    if not ours:
+        return None, [], []
+    chokepoint = key in check_sufficiency.CHOKEPOINT
+    if not rule.is_correlation:
+        truth, _ = rule.truth_table(sigma_eval.EventTable(benign))
+        attack_truth, _ = rule.truth_table(sigma_eval.EventTable(ours))
+    counted, skipped = [], []
+    for i, v in enumerate(verdicts):
+        if v.kind not in sigma_explain.NON_TRIVIAL:  # a mismatch is graded distant
+            continue
+        atoms = []
+        for atom in v.atoms:
+            if rule.is_correlation:
+                # A set is a near-miss on one atom repair. Only a base repair shows that
+                # a base is load-bearing; a group-by, timespan, order or threshold
+                # repair moves the same events, and shows nothing of an item.
+                why = (None if atom.startswith("base:") else
+                       "a correlation counts a near-miss set only on a base atom (base:<ref>)")
+            else:
+                why = flip_not_counted(rule, atom, benign[i], truth[i][atom],
+                                       [row[atom] for row in attack_truth], chokepoint)
+            if why:
+                skipped.append({"index": None if rule.is_correlation else i, "kind": v.kind,
+                                "atom": atom, "why": why})
+            else:
+                atoms.append(atom)
+        if atoms:
+            counted.append({"index": None if rule.is_correlation else i, "kind": v.kind,
+                            "atoms": atoms})
+    return bool(counted), counted, skipped
+
+
+def grade_benign(rule, benign, ours=(), key=None):
+    """Grade every benign record against the rule, and judge whether the baseline is
+    hard (judge_hard()): (one-line summary, details). `ours` are the marked attack
+    hits, and `key` is the rule's <folder>/<file> (for CHOKEPOINT). Without marked
+    attack hits (the self-test of check_null_safety.py grades a constructed rule) the
+    detail says hard None: not judged."""
     rule = rule.stripped()  # without null guards and copies: no items of the rule
     verdicts = sigma_explain.judge_events(rule, benign)
     kinds = {}
@@ -726,17 +875,32 @@ def grade_benign(rule, benign):
     covered, unexercised = sigma_explain.coverage(rule, verdicts)
     exercised = [a for a, hits in covered.items() if hits]
     order = sorted(kinds, key=lambda k: sigma_explain.KIND_RANK[k])
-    line = ("benign baseline graded (informational): "
-            + ", ".join(f"{kinds[k]} {k}" for k in order)
-            + f"; atoms exercised {len(exercised)}/{len(rule.atoms)}")
+    counts = ", ".join(f"{kinds[k]} {k}" for k in order)
+    line = f"benign baseline graded: {counts}; atoms exercised {len(exercised)}/{len(rule.atoms)}"
     mismatched = [i for i, v in enumerate(verdicts) if v.mismatch]
     if mismatched:
         line += (f"; !! sigma_explain disagrees with the compiled rule on benign record(s) "
                  f"{mismatched} (report it)")
+    hard, counted, skipped = judge_hard(rule, key, benign, verdicts, ours)
     records = [{"index": i, "kind": v.kind, "atoms": v.atoms} for i, v in enumerate(verdicts)]
     detail = {"summary": line, "kinds": kinds, "exercised": exercised,
-              "unexercised": unexercised, "records": records}
+              "unexercised": unexercised, "records": records, "counts": counts,
+              "mismatched": mismatched, "hard": hard, "hard_records": counted,
+              "not_counted": skipped}
     return line, detail
+
+
+def not_hard_lines(grading):
+    """The explanation of a NOT HARD row: each flip that does not count, and why."""
+    lines = []
+    for s in grading["not_counted"]:
+        where = "the benign event set" if s["index"] is None else f"benign record #{s['index']}"
+        lines.append(f"{where} is {s['kind']} on `{s['atom']}`, which does not count: "
+                     f"{s['why']}")
+    lines.append("to make the baseline hard, add a copy of a marked attack hit that breaks "
+                 "one discriminating item (a near-miss), or that an allowlist filter of the "
+                 "rule holds (filtered)")
+    return lines
 
 
 def write_json(path, report):
@@ -750,8 +914,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="Compile every cloud rule; no fixtures needed.")
     ap.add_argument("--report", action="store_true",
-                    help="Report misses instead of failing on them (a missing fixture "
-                         "and a benign baseline without a record still fail).")
+                    help="Report misses instead of failing on them (a missing fixture, "
+                         "and a benign baseline without a record, without a hard record or "
+                         "that cannot be graded, still fail).")
     ap.add_argument("--json", metavar="PATH",
                     help="Also write a machine-readable report (results + explanations).")
     args = ap.parse_args()
@@ -859,7 +1024,8 @@ def validate(args, report):
         attack_hits = [attack[i] for i in attack_idx]
         benign_hits = [benign[i] for i in benign_idx]
         ours = [e for e in attack_hits if gate(e)]
-        rule, why_not = load_rule(os.path.join(SIGMA, folder, fname))
+        rule, not_loaded = load_rule(os.path.join(SIGMA, folder, fname))
+        why_not = [f"(no explanation: {not_loaded})"] if not_loaded else []
 
         ok = True
         detail = []
@@ -888,11 +1054,40 @@ def validate(args, report):
             explanation += (explained(explain_benign_hits, rule, benign, benign_idx)
                             if rule else why_not)
         grade_line, grading = why_not[0] if why_not else "", None
-        if rule:
+        ungraded = not_loaded or _SUFFICIENCY_ERROR
+        if not ungraded:
             try:
-                grade_line, grading = grade_benign(rule, benign)
+                grade_line, grading = grade_benign(rule, benign, ours, f"{folder}/{fname}")
             except Exception as e:  # noqa: BLE001
+                ungraded = f"sigma_explain raised {type(e).__name__}: {e}"
                 grade_line = f"(no benign grading: {type(e).__name__}: {e})"
+        if ungraded and not grade_line:
+            grade_line = f"(no benign grading: {ungraded})"
+        # The hard-baseline check (roadmap R2e): a baseline that holds records must
+        # hold one that differs from the attack in a discriminating field.
+        not_hard = False
+        if not vacuous and grading is None:
+            not_hard = True
+            ok = False
+            detail.append("NEGATIVE CONTROL NOT GRADED: the benign baseline "
+                          f"{os.path.relpath(benign_path, REPO)} could not be graded "
+                          f"({ungraded}), so nothing shows that a record of it is a near-miss "
+                          "or a filtered negative of the rule")
+        elif not vacuous and grading["hard"] is False:
+            not_hard = True
+            ok = False
+            counts = grading["counts"]
+            if grading["mismatched"]:
+                # sigma_explain grades such a record distant: it cannot count, and the
+                # cause is the grader, not the baseline.
+                counts += ("; sigma_explain disagrees with the compiled rule on benign "
+                           "record(s) " + ", ".join(f"#{i}" for i in grading["mismatched"])
+                           + ", so they cannot count (report it)")
+            detail.append("NEGATIVE CONTROL NOT HARD: the benign baseline "
+                          f"{os.path.relpath(benign_path, REPO)} holds no near-miss or filtered "
+                          "record of the rule that differs from the attack in a discriminating "
+                          f"field ({counts})")
+            explanation += not_hard_lines(grading)
 
         if ok:
             passes += 1
@@ -900,7 +1095,7 @@ def validate(args, report):
                   f"record(s) match; benign baseline clean ({len(benign)} record(s)) "
                   f"-- {note}")
         else:
-            if vacuous:
+            if vacuous or not_hard:
                 unproven += 1
             else:
                 fails += 1
@@ -921,9 +1116,10 @@ def validate(args, report):
         return 1
     if unproven:
         print(f"FAILED: {unproven} rule(s) of MANIFEST have no proof: a fixture that MANIFEST "
-              "names is missing or cannot be read, or a benign baseline holds no record (see "
-              "the ERROR rows and the NEGATIVE CONTROL VACUOUS rows). --report does not make "
-              "this non-fatal.")
+              "names is missing or cannot be read, or a benign baseline holds no record, "
+              "holds no hard record or cannot be graded (see the ERROR rows and the NEGATIVE "
+              "CONTROL VACUOUS, NOT HARD and NOT GRADED rows). --report does not make this "
+              "non-fatal.")
     if fails and not args.report:
         print(f"FAILED: {fails} technique(s) did not satisfy attack-fires + "
               f"control-holds. (Use --report to treat as non-fatal.)")

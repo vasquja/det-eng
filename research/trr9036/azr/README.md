@@ -252,12 +252,16 @@ assigns then **revokes** a privileged built-in role to a throwaway principal at 
 is committed Azure Activity Log fixtures
 ([`detections/cloud/fixtures/trr9036/`](../../../detections/cloud/fixtures/trr9036/)): an
 attack grant of Owner at a `/subscriptions/<test-guid>` scope (Start + completion), and a
-hard benign baseline — a Terraform grant of the non-privileged Key Vault Secrets User role
-at a Key Vault (resource-group) scope — which hits the same chokepoint and differs only on
-the `requestbody` `RoleDefinitionId` + `Scope`. The same hard benign already lives in the
-scored corpus
+benign baseline of three records. Records #0 and #1 are a Terraform grant of the
+non-privileged Key Vault Secrets User role at a Key Vault (resource-group) scope (Start +
+completion). The same grant is in the scored corpus
 ([`detections/benign/slices/azure/azure-activity-mi-admin.json`](../../../detections/benign/slices/azure/azure-activity-mi-admin.json)),
-where the rule scores **0**.
+where the rule scores **0**. That grant differs from the attack in the role and in the
+scope, so no single change makes the rule fire on it: the validator grades it `distant`.
+Record #2 is the hard benign: the attack's Start record with the Owner role changed to
+Reader (`acdd72a7-3385-48ef-bd42-f606fba81ae7`), made by a platform admin from another
+address. Of the values that the rule tests, only the role differs (the `RoleDefinitionId`
+in the `requestbody`), so the record is a near-miss on `selection_privileged_role`.
 
 | Procedure | Test | Status |
 |-----------|------|--------|
@@ -275,10 +279,13 @@ The validator
 [`detections/validate_cloud_detections.py`](../../../detections/validate_cloud_detections.py)
 runs the rule over its attack fixture (must fire on the Start record, carrying the
 `trr9036-attacker` marker in `identity.claims.name`, a field the rule does not read) and its
-benign baseline (must fire on nothing). The benign baseline is a legitimate Terraform Key
-Vault Secrets User grant — same Activity Log chokepoint, differing only on the `requestbody`
-`RoleDefinitionId` + `Scope` — so the pass proves the rule keys on the role and scope, not on
-the `roleAssignments/write` write alone.
+benign baseline (must fire on nothing). The hard record of the baseline is a Reader grant
+at the attack's subscription scope. Of the values that the rule tests, only the role
+differs (the `RoleDefinitionId` in the `requestbody`), so the pass proves that the rule keys
+on the role, not on the `roleAssignments/write` write alone. The baseline also holds a
+legitimate Terraform Key Vault Secrets User grant, which differs in the role and the scope.
+The scope alone is proven by the sidecar case `role-assignment-owner-resource-group`: an
+Owner grant at resource-group scope, a filtered negative of the rule.
 
 ## References
 

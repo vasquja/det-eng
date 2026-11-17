@@ -364,7 +364,10 @@ KNOWN_GAPS = {}     # id -> Gap: every @known_gap of every imported test module
 def known_gap(gap_id, *, gate, reason, closes, today="accepts", _registry=None):
     """Mark a test of an artifact that the gate SHOULD reject and does not reject today.
 
-    Write the test body as the wanted behaviour, ending in one assert_rejects():
+    Write the test body as the wanted behaviour, ending in one assert_rejects(). The
+    example is the test of the gap `cloud-benign-far-from-the-rule` in its first form,
+    before roadmap item R2e closed it (it is now the rejection test
+    CloudValidator.test_rejects_benign_baseline_far_from_the_rule):
 
         @gatelib.known_gap("cloud-benign-far-from-the-rule",
                            gate="detections/validate_cloud_detections.py",

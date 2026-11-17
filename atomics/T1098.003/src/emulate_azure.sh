@@ -21,7 +21,7 @@ FIXDIR="$HERE/../../../detections/cloud/fixtures/trr9036"
 
 if [[ "${1:-}" == "--show-fixture" || "${2:-}" == "--show-fixture" ]]; then
   echo "# attack (Owner @ subscription scope, Start + completion):"; cat "$FIXDIR/attack.json"
-  echo; echo "# hard benign (Key Vault Secrets User @ Key Vault scope):"; cat "$FIXDIR/benign.json"
+  echo; echo "# benign (Key Vault Secrets User @ Key Vault scope; hard record #2: Reader @ subscription scope):"; cat "$FIXDIR/benign.json"
   exit 0
 fi
 

@@ -160,5 +160,59 @@
     "managementEvent": true,
     "recipientAccountId": "123456789012",
     "eventCategory": "Management"
+  },
+  {
+    "_comment": "b5 NEAR-MISS: the attack exchange with one discriminating field changed: responseElements.provider is the S3-hosted issuer of the platform team's own self-managed (kubeadm) cluster, which runs the pod-identity webhook, not an EKS cluster OIDC provider. Its pods exchange their service-account tokens from the datacenter egress (198.51.100.150, not in the allowlist), so the source IP stays off-cluster. Proves the rule's EKS scope rests on the provider item.",
+    "eventVersion": "1.08",
+    "userIdentity": {
+      "type": "WebIdentityUser",
+      "principalId": "trr9022-onprem-oidc.s3.us-east-1.amazonaws.com:sts.amazonaws.com:system:serviceaccount:trr9022:app",
+      "userName": "system:serviceaccount:trr9022:app",
+      "identityProvider": "arn:aws:iam::123456789012:oidc-provider/trr9022-onprem-oidc.s3.us-east-1.amazonaws.com"
+    },
+    "eventTime": "2026-10-13T15:02:37Z",
+    "eventSource": "sts.amazonaws.com",
+    "eventName": "AssumeRoleWithWebIdentity",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "198.51.100.150",
+    "userAgent": "aws-sdk-go-v2/1.24.1 os/linux lang/go#1.21 md/GOARCH#amd64 api/sts#1.26.7",
+    "requestParameters": {
+      "roleArn": "arn:aws:iam::123456789012:role/trr9022-eks-irsa-role",
+      "roleSessionName": "botocore-session-1699999940",
+      "durationSeconds": 86400
+    },
+    "responseElements": {
+      "credentials": {
+        "accessKeyId": "ASIATRR9022BENIGN5",
+        "sessionToken": "IQoJb3JpZ2luX2VjBENIGNTOKEN5",
+        "expiration": "Oct 14, 2026 3:02:37 PM"
+      },
+      "subjectFromWebIdentityToken": "system:serviceaccount:trr9022:app",
+      "assumedRoleUser": {
+        "assumedRoleId": "AROATRR9022EXAMPLEID0:botocore-session-1699999940",
+        "arn": "arn:aws:sts::123456789012:assumed-role/trr9022-eks-irsa-role/botocore-session-1699999940"
+      },
+      "provider": "arn:aws:iam::123456789012:oidc-provider/trr9022-onprem-oidc.s3.us-east-1.amazonaws.com",
+      "audience": "sts.amazonaws.com"
+    },
+    "requestID": "b5b2c3d4-9022-eeee-req-000000000005",
+    "eventID": "b5b2c3d4-9022-eeee-evt-000000000005",
+    "readOnly": true,
+    "resources": [
+      {
+        "accountId": "123456789012",
+        "type": "AWS::IAM::Role",
+        "ARN": "arn:aws:iam::123456789012:role/trr9022-eks-irsa-role"
+      }
+    ],
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management",
+    "tlsDetails": {
+      "tlsVersion": "TLSv1.3",
+      "cipherSuite": "TLS_AES_128_GCM_SHA256",
+      "clientProvidedHostHeader": "sts.amazonaws.com"
+    }
   }
 ]
