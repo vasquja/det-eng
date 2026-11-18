@@ -43,6 +43,11 @@ by entry ID (for example `L14`). IDs are not reused: a closed entry's ID stays r
     [`k8s/policy_coverage.json`](k8s/policy_coverage.json); `python3
     detections/k8s_policy_coverage.py --detail` prints it. A published policy is not a
     capture, so a simulator result is **unverified** on a live cluster;
+  - *external record*: a record of a dataset that
+    [`external/SOURCES.json`](external/SOURCES.json) pins (the commit, the path, the
+    sha256 and the line), with the line of the report of
+    [`check_external_records.py`](check_external_records.py) that judged it. The
+    agent did not write the record, but its author can have edited it;
   - *source*: the upstream source that shows the real behaviour, as the reviewer read
     it. A *Go reproduction against `<module>@<version>`* is a small program, not kept in
     this repository, that ran that module's code; it is source evidence, not a probe.
@@ -2488,13 +2493,15 @@ the current ones.
   2. **The keys are in lower case.** The three `|re` values read the key `Issuer` with
      a capital I. The `newValue` of line 1 writes the keys `name`, `issuer`, `subject`
      and `audiences`. So an unapproved issuer in this shape is quiet too. Whether Entra
-     writes lower-case keys is **unverified**, and the evidence says that it does not
-     (Evidence, *source*).
+     writes lower-case keys is **unverified**, and the evidence suggests that it does
+     not (Evidence, *source*).
 
   Description: the coverage summary of [TRR9013](../research/trr9013/azr/README.md)
   gives procedure B to this rule for an "`oldValue -> newValue` issuer/subject change",
-  and its alert condition names a broadened `Subject`. The rule reads neither: a
-  repoint that changes only the subject, to a repository of another owner, is quiet.
+  and its alert condition names a broadened `Subject`. The rule reads only the new
+  issuer: it does not compare `oldValue` with `newValue`, and it does not read the
+  subject. So a repoint that changes only the subject, to a repository of another
+  owner, is quiet.
   The description of the rule asks a pipeline to "also alert on a wildcarded/over-broad
   Subject". A plain credential accepts no wildcard (only a flexible credential holds a
   matching expression), so what makes the subject of a plain GitHub credential unsafe is
@@ -2570,7 +2577,7 @@ the current ones.
   - *source*, the subject: the GitHub OIDC reference (the github/docs source at commit
     `1956c559`; docs.github.com was not reachable): the issuer of each workflow token is
     `https://token.actions.githubusercontent.com`, the default subject is
-    `repo:<owner>/<repo>:...`, a repository created from 2026-07-15 gets the immutable
+    `repo:<owner>/<repo>:...`, a repository created after 2026-07-15 gets the immutable
     form `repo:<owner>@<id>/<repo>@<id>:...`, and the cloud side "must define at least
     one condition, so that untrusted repositories can't request access tokens".
     Microsoft Learn: the issuer, the subject and the audience must match the token
@@ -2607,10 +2614,15 @@ the current ones.
 - **Then**: new sidecar cases: a positive with the shape of line 1 (the GitHub issuer, a
   subject in a repository of another owner, lower-case keys) and its PascalCase twin; a
   near-miss that is the same record with an approved owner, which breaks only the owner
-  item; and a positive for each new key spelling. The subjects of the existing cases
-  name the owners `trr9013-corp` and `example-org`: put them on the list, or the new
-  branch fires on near-misses and benign records (a change of an existing case is a
-  human decision, [Closing an entry](#closing-an-entry), step 2). The pair of
+  item; and a positive for each new key spelling. The existing records with the GitHub
+  issuer name two owners in their subjects. `example-org` (sidecar cases, benign corpus)
+  can go on the list of approved owners. `trr9013-corp` (the near-misses
+  `approved-issuer-only` and `approved-issuer-enterprise-path`, and the benign fixture
+  [`cloud/fixtures/trr9013/benign.json`](cloud/fixtures/trr9013/benign.json)) cannot:
+  R4 of `check_sufficiency.py` fails a detection that holds an emulation name. So the
+  owner in those two near-misses and in that fixture must change to an approved owner,
+  or the new branch fires on them. A change of an existing case is a human decision
+  ([Closing an entry](#closing-an-entry), step 2). The pair of
   `check_external_records.py` on this dataset turns `FIRE` on line 1, and line 2 stays
   quiet. Then the entry closes. Until then, a `known-miss` declaration of the owner (R3,
   PR-3) can cite this entry.
