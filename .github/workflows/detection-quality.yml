@@ -1080,10 +1080,11 @@ jobs:
     # test classes (gatelib.py --shard K/3), and each class is in one shard. The
     # shards split the classes by their CPU seconds
     # (detections/tests/class_seconds.json). One runner needed about six to eight
-    # minutes for all the tests (347 and 460 s, measured). A split by wall seconds gave legs
-    # of 225, 239 and 110 s (run 44187275891, measured): heavy classes use several
-    # CPUs, and a class takes longer when heavy classes run beside it. The leg times
-    # with the split by CPU seconds are still to be measured.
+    # minutes for all the tests (347 and 460 s, measured). A split by wall seconds
+    # gave legs of 225, 239 and 110 s (run 44187275891, measured): heavy classes use
+    # several CPUs, and a class takes longer when heavy classes run beside it. A
+    # split by CPU seconds gave legs of 187, 191 and 201 s (run 44203961149,
+    # measured).
     # fail-fast is false: a leg that fails does not cancel the other legs, so the log
     # shows each failure.
     # Each leg has the timeout and the pip cache of the job. GitHub names the check

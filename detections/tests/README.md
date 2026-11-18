@@ -266,11 +266,10 @@ class RuleCases(gatelib.GateCase):
 - **Never weaken a test to get green.** When a gate does not reject an artifact
   that it should reject, the case is a known gap.
 - **Stay fast.** Each shard of CI must run in less than four minutes on a CI
-  runner (with the split by wall seconds the legs took 225, 239 and 110 s on
-  2026-11-17; the legs with the split by CPU seconds are still to be measured).
-  No class can be in two shards, so the heaviest class
-  (`test_validators.CloudValidator`: 238 s in a leg on 2026-11-17, and 248 s of
-  CPU) is the least time of its shard: keep each class well below that.
+  runner (with the split by CPU seconds the legs took 187, 191 and 201 s on
+  2026-11-17). No class can be in two shards, so the heaviest class
+  (`test_validators.CloudValidator`: 186 s and 380 s of CPU in a leg on a
+  runner) is the least time of its shard: keep each class well below that.
   Give each gate its own test class: `gatelib.py --run` runs the classes at the
   same time. For a gate that needs several seconds for one run, start the runs
   of the class together (see below).
@@ -444,11 +443,14 @@ CPUs: alone on a machine with four CPUs, `test_validators.CloudValidator` used
 class takes longer when heavy classes run beside it: in legs 1 and 2 the classes
 took about 1.75 times their seconds in the table, in leg 3 about 0.8 times. By
 the CPU seconds of each class alone, the classes of the three legs needed 452,
-533 and 286 s of CPU. Thus the table now holds CPU seconds, and the split by CPU
-seconds gives each shard 424 s of CPU. The leg times with this split are still to
-be measured. Each shard starts its heaviest class first. The heaviest class is
-the least time of its shard: `test_validators.CloudValidator` took 238 s in leg 2,
-and 99 s alone on a machine with four CPUs (248 s of CPU).
+533 and 286 s of CPU. Thus the table holds CPU seconds. With a split by the CPU
+seconds of each class alone (424 s for each shard), the three legs of run
+44203961149 (2026-11-17) took 187, 191 and 201 s (measured), and their classes
+used 681, 747 and 788 s of CPU on the runners. The table now holds the CPU seconds
+of each class in that run, which give each shard 739 s of CPU. Each shard starts
+its heaviest class first. The heaviest class is the least time of its shard:
+`test_validators.CloudValidator` took 186 s in leg 1 of run 44203961149 (380 s of
+CPU), and 99 s alone on a machine with four CPUs (248 s of CPU).
 `test_suite.py` pins the command, the matrix and the name of the job with the
 same number of shards (`GateTestsJob`), and proves on the real suite that the
 shards hold each class one time, that a class collects the test of each known
@@ -456,10 +458,8 @@ gap, and that the test of a gap runs in each shard that holds a class that
 collects it (`GateTestShards`).
 
 The table `class_seconds.json` holds the CPU seconds of each class: the user and
-system time of the class process and of the processes that it waits for. For now
-the numbers come from a run of each class alone on a Linux machine with four
-CPUs on 2026-11-17, not from CI: the CPU seconds of the command
-`gatelib.py --run --no-skips --jobs 1 <class>` and of its child processes. To
+system time of the class process and of the processes that it waits for. The
+numbers come from the class lines of the three legs of run 44203961149. To
 update the table, take the CPU seconds `C` of the line of each class
 (`===== module.Class: ok, N test(s), S s (CPU C s)`) from the logs of the three
 legs of one CI run. When a class is renamed or removed, its entry must go too
