@@ -4672,12 +4672,15 @@ class ApiserverValidator(gatelib.GateCase):
         return step._replace(run="\n".join(lines) + "\n")
 
     def sensor_keys(self, job="validate"):
-        """The audit keys of the two watches of the file sensor step of `job`, from
-        its `auditctl` lines: (the key of the canary watch on ca.crt, the key of the
-        watch on the token file). The file of a watch is found through the shell
+        """The audit keys of the two read watches of the file sensor step of `job`,
+        from its `auditctl` lines: (the key of the canary watch on ca.crt, the key of
+        the watch on the token file). The file of a watch is found through the shell
         variables of the step, so a variable can get another name. That step has
         `continue-on-error`, so gatelib.ci_step() refuses it: the step comes from
-        gatelib.ci_steps()."""
+        gatelib.ci_steps(). The step also adds one write tree watch (`-F dir=`), on the
+        work directory of TRR9040 Procedure A; the test checks that it is the only
+        other watch, that it is on that directory, and that it has the key of the
+        token watch (the key the file log is made from)."""
         watches = [(step.run, [line for line in gatelib._command_lines(step.run)
                                if line.startswith("sudo auditctl -a ")])
                    for step in gatelib.ci_steps()
@@ -4686,6 +4689,8 @@ class ApiserverValidator(gatelib.GateCase):
         self.assertEqual(len(watches), 1, f"job {job}: {len(watches)} step(s) add an audit "
                                           "watch; wanted the file sensor step only")
         run, lines = watches[0]
+        tree_watches = [line for line in lines if " -F dir=" in line]
+        lines = [line for line in lines if " -F dir=" not in line]
         # The value that the step gives each shell variable (`NAME=...` at the start
         # of a line). A watch path names variables, and the test follows them to the
         # file: the name of a variable is not a part of the rule.
@@ -4721,7 +4726,24 @@ class ApiserverValidator(gatelib.GateCase):
                              f"of the variables of the step: {path}")
             keys.append(found.group(2))
         self.assertEqual(len(lines), 2, f"job {job}: the file sensor step adds "
-                                        f"{len(lines)} watch(es); wanted 2")
+                                        f"{len(lines)} read watch(es); wanted 2")
+        self.assertEqual(len(tree_watches), 1, f"job {job}: the file sensor step adds "
+                                               f"{len(tree_watches)} tree watch(es); wanted 1 "
+                                               "(the TRR9040 work directory)")
+        found = re.fullmatch(r"sudo auditctl -a always,exit -F dir=(\S+) -F perm=wa "
+                             r"-F key=([\w.-]+)", tree_watches[0])
+        self.assertIsNotNone(found, f"job {job}: the test reads the tree watch in the form "
+                                    "`sudo auditctl -a always,exit -F dir=... -F perm=wa "
+                                    f"-F key=...`: {tree_watches[0]}")
+        with open(os.path.join(gatelib.REPO, self.GATE), encoding="utf-8") as fh:
+            crash_dir = re.search(r'^JVM_CRASH_DIR = "([^"]+)"$', fh.read(),
+                                  re.MULTILINE).group(1).rstrip("/")
+        self.assertEqual(expanded(found.group(1)).strip('"'), crash_dir,
+                         f"job {job}: the tree watch must be on the TRR9040 work directory "
+                         f"{crash_dir} (validate_apiserver_detections.JVM_CRASH_DIR)")
+        self.assertEqual(found.group(2), keys[1],
+                         f"job {job}: the tree watch must have the key of the token watch, "
+                         "the key the capture and collect steps convert")
         return tuple(keys)
 
     def vacuous_lines(self, result):

@@ -1,0 +1,37 @@
+attack_technique: T1190
+display_name: "Exploit Public-Facing Application (HotSpot JVM fatal error log)"
+
+# Behavioral emulation for TRR9040. Procedure A makes a HotSpot JVM die with a VM
+# fatal error, so the JVM's error handler creates hs_err_pid<pid>.log in its working
+# directory: the on-disk artifact of a C2 JIT memory-corruption crash such as
+# CVE-2026-114938 ("Java4Shell"). It is NOT an exploit: a 16 MiB heap fills until
+# OutOfMemoryError and -XX:+CrashOnOutOfMemoryError makes that error fatal. Core dumps
+# are off. A FIXED work directory (/tmp/trr9040-crash) lets a validator gate on the
+# emulation's own file; the emulation deletes it at the end.
+
+atomic_tests:
+  - name: "TRR9040.LIN.A — JVM fatal error writes hs_err_pid<pid>.log"
+    auto_generated_guid: 73cef22d-5fbc-4946-b740-75aca96c7ba9
+    description: |
+      Runs a small Java program under a 16 MiB heap with -XX:+CrashOnOutOfMemoryError
+      in /tmp/trr9040-crash. The JVM ends with a VM fatal error, and HotSpot creates
+      hs_err_pid<pid>.log in its working directory, the same file a SIGSEGV in
+      compiled code (the Java4Shell crash path) creates.
+      Rule: detections/sigma/T1190/linux_jvm_fatal_error_log_create.yml
+    supported_platforms:
+      - linux
+    dependency_executor_name: bash
+    dependencies:
+      - description: |
+          A JDK 11 or later (the source-file launcher runs the .java file directly).
+        prereq_command: |
+          java -version
+        get_prereq_command: |
+          echo "Install a JDK 11 or later (for example: sudo apt-get install -y openjdk-21-jdk-headless)"
+    executor:
+      name: bash
+      elevation_required: false
+      command: |
+        bash #{source_dir}/emulate.sh a
+      cleanup_command: |
+        rm -rf /tmp/trr9040-crash

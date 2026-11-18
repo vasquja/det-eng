@@ -40,6 +40,9 @@ key on the same API server audit log (plus one node runtime sensor rule):
                                         discovery.k8s.io EndpointSlice -> audit -> Sigma
   * TRR9035 (T1098.006/T1136, CSR client-cert persistence) - a kube-apiserver-client CSR
                                            create (scoped by signerName) + its approval
+  * TRR9040 (T1190, JVM fatal error log) - a HotSpot JVM creates hs_err_pid<pid>.log
+                                           (the crash artifact of CVE-2026-114938), on
+                                           the node file-event sensor, not the audit log
 
 The loop this proves, for each match-gated rule:
 
@@ -623,6 +626,32 @@ def file_read(image, endswith="/token", window=None, time="Timestamp"):
         return (e.get("Image") == image
                 and str(e.get("TargetFilename") or "").endswith(endswith))
     gate.describe = f"Image == {image!r} and TargetFilename ends with {endswith!r}"
+    gate.window = window
+    gate.time_field = time
+    return gate
+
+
+# TRR9040 Procedure A crashes a JVM in a fixed work directory on the runner
+# (atomics/T1190/src/emulate.sh), which the file sensor step watches for writes.
+JVM_CRASH_DIR = "/tmp/trr9040-crash/"
+
+
+def jvm_crash_log(window=None, time="Timestamp"):
+    """TRR9040 Procedure A, node file sensor (C2-7): a JVM whose executable is named
+    `java` creates hs_err_pid<pid>.log in the emulation's work directory
+    (JVM_CRASH_DIR). Like file_read() the event is a linux/file_event record from
+    auditd_file_events.py, so the window reads `Timestamp`. The gate selects the
+    JVM's own create by the work directory and the executable's file name, which the
+    rule does not read (the rule keys on the file name and the create). The cleanup's
+    delete of the same file comes after the procedure's window ends; the sidecar
+    near-misses prove offline that the rule stays quiet on a read, a rotation and
+    another JVM log."""
+    def gate(e):
+        return (os.path.basename(str(e.get("Image") or "")) == "java"
+                and str(e.get("TargetFilename") or "").startswith(JVM_CRASH_DIR)
+                and e.get("EventType") == "create")
+    gate.describe = (f"Image file name == 'java' and TargetFilename starts with "
+                     f"{JVM_CRASH_DIR!r} and EventType == 'create'")
     gate.window = window
     gate.time_field = time
     return gate
@@ -1312,6 +1341,14 @@ MANIFEST = [
         ("B", rec(verb=("create", "update", "patch"), resource="endpointslices", sub=None,
                   ns="trr9039", user=non_system, also=apigroup("discovery.k8s.io"),
                   window=("9039", "b")))]),
+    # TRR9040 (T1190): the on-host artifact of a HotSpot JVM memory-corruption crash
+    # (CVE-2026-114938, "Java4Shell"). Procedure A makes a JVM die with a VM fatal error
+    # in a watched work directory on the runner, so the JVM creates hs_err_pid<pid>.log.
+    # The kind node and the runner share one kernel and one auditd, so the same node
+    # file-event sensor (C2-7) records the create; no API request is made.
+    ("T1190", "linux_jvm_fatal_error_log_create.yml", "file", "9040 A",
+     "HotSpot fatal error log create (file-event rule; no Kubernetes API involvement)",
+     [("A", jvm_crash_log(window=("9040", "a")))]),
 ]
 
 

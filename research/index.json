@@ -1529,6 +1529,36 @@
           "url": "../atomics/T1557/src/emulate.sh"
         }
       }
+    },
+    {
+      "name": "Exploited Java Service Crash: HotSpot Fatal Error Log (Linux)",
+      "id": "TRR9040",
+      "tactics": [
+        "Initial Access",
+        "Impact"
+      ],
+      "contributors": [
+        "det-eng"
+      ],
+      "external_ids": [
+        "T1190",
+        "T1499.004"
+      ],
+      "platforms": [
+        "Linux"
+      ],
+      "procedures": {
+        "A": "JVM fatal error writes hs_err_pid<pid>.log"
+      },
+      "pub_date": "2026-11-18",
+      "last_update": "2026-11-18",
+      "path": "trr9040/lin/README.md",
+      "tests": {
+        "A": {
+          "text": "det-eng JVM fatal error (OutOfMemoryError made fatal) behavioral atomic",
+          "url": "../atomics/T1190/src/emulate.sh"
+        }
+      }
     }
   ]
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Turn Linux audit records into Sigma `linux` / `file_event` JSON lines, for the two
-node file-event rules the kind CI node sensor gates (C2-7):
+Turn Linux audit records into Sigma `linux` / `file_event` JSON lines, for the
+file-event rules the kind CI node sensor gates (C2-7):
 
   * T1552.007/linux_k8s_sa_token_read.yml  (TRR9006 Procedure E) -- a read of a
     projected service-account token off the node, caught by a per-file read
@@ -15,7 +15,11 @@ node file-event rules the kind CI node sensor gates (C2-7):
     write in the kubelet static-pod directory, caught by a write/attribute tree
     watch on the host directory that is bind-mounted there, in the checkout
     (`-F dir=${GITHUB_WORKSPACE}/.kind/trr9003-manifests -F perm=wa`).
-Both use the key k8s_node_file. The capture step of validate-apiserver-detections.yml
+  * T1190/linux_jvm_fatal_error_log_create.yml (TRR9040 Procedure A) -- a JVM's
+    create of hs_err_pid<pid>.log, caught by a write/attribute tree watch on the
+    runner directory the emulation crashes a JVM in
+    (`-F dir=/tmp/trr9040-crash -F perm=wa`).
+All three use the key k8s_node_file. The capture step of validate-apiserver-detections.yml
 also converts the key k8s_node_canary (the canary read of ca.crt that the file
 sensor step makes) into the pre-emulation file log.
 

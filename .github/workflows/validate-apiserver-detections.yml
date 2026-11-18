@@ -102,6 +102,7 @@ on:
       - 'detections/sigma/T1036.005/**'
       - 'detections/sigma/T1133/**'
       - 'detections/sigma/T1204.003/**'
+      - 'detections/sigma/T1190/**'
       - 'detections/sigma/T1557/**'
       - 'detections/validate_apiserver_detections.py'
       - 'detections/sigma_eval.py'
@@ -125,6 +126,7 @@ on:
       - 'atomics/T1036.005/**'
       - 'atomics/T1133/**'
       - 'atomics/T1204.003/**'
+      - 'atomics/T1190/**'
       - 'atomics/T1557/**'
       - '.github/workflows/validate-apiserver-detections.yml'
   # PRs always trigger this workflow (no paths: filter) so the required
@@ -256,6 +258,7 @@ jobs:
             'detections/sigma/T1036.005/' \
             'detections/sigma/T1133/' \
             'detections/sigma/T1204.003/' \
+            'detections/sigma/T1190/' \
             'detections/sigma/T1557/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
@@ -278,6 +281,7 @@ jobs:
             'atomics/T1036.005/' \
             'atomics/T1133/' \
             'atomics/T1204.003/' \
+            'atomics/T1190/' \
             'atomics/T1557/' \
             '.github/workflows/validate-apiserver-detections.yml')
           # Fail safe: if the diff cannot be computed, run the validator.
@@ -345,6 +349,7 @@ jobs:
             'detections/sigma/T1036.005/' \
             'detections/sigma/T1133/' \
             'detections/sigma/T1204.003/' \
+            'detections/sigma/T1190/' \
             'detections/sigma/T1557/' \
             'detections/validate_apiserver_detections.py' \
             'detections/sigma_eval.py' \
@@ -367,6 +372,7 @@ jobs:
             'atomics/T1036.005/' \
             'atomics/T1133/' \
             'atomics/T1204.003/' \
+            'atomics/T1190/' \
             'atomics/T1557/' \
             '.github/workflows/validate-apiserver-detections.yml')
           range=""
@@ -651,6 +657,17 @@ jobs:
           grep -qF k8s_node_file <<<"${rules}" || { echo "::error::auditd watch not set"; exit 1; }
           echo "TRR9006_TOKEN_FILE=${TOKEN_FILE}" >> "$GITHUB_ENV"
           echo "Canary held; watching ${TOKEN_FILE} (resolves to ${REAL}) for reads."
+          # TRR9040 (T1190): a write/attribute tree watch on the work directory where
+          # Procedure A crashes a JVM on the runner (atomics/T1190/src/emulate.sh), so the
+          # JVM's create of hs_err_pid<pid>.log is a file event under the same key. The
+          # directory is on the runner's own /tmp, which the runner's namespace sees, so a
+          # tree watch records it (unlike the node's projected-volume tmpfs above).
+          CRASH_DIR=/tmp/trr9040-crash
+          mkdir -p "${CRASH_DIR}"
+          sudo auditctl -a always,exit -F dir="${CRASH_DIR}" -F perm=wa -F key=k8s_node_file
+          rules="$(sudo auditctl -l)"
+          grep -qF "${CRASH_DIR}" <<<"${rules}" || { echo "::error::auditd watch on ${CRASH_DIR} not set"; exit 1; }
+          echo "Watching ${CRASH_DIR} for writes (TRR9040 A)."
 
       - &apiserver-benign
         name: Benign operator workload (live false-positive slice)
@@ -878,6 +895,18 @@ jobs:
         # in the trr9039 namespace, which the emulation creates and deletes; no real Service,
         # pod or host is touched.
         run: bash atomics/T1557/src/emulate.sh all
+
+      - &apiserver-emulate-9040
+        name: Emulate TRR9040 (JVM fatal error log, OutOfMemoryError made fatal)
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        shell: bash
+        # Procedure A runs a small Java program under a 16 MiB heap with
+        # -XX:+CrashOnOutOfMemoryError in /tmp/trr9040-crash, which the file sensor step
+        # watches, so HotSpot creates hs_err_pid<pid>.log there (the on-host artifact of a
+        # JIT crash such as CVE-2026-114938). No exploit runs, core dumps are off, and the
+        # emulation deletes the directory at the end. It uses the runner image's JDK (the
+        # `java` on PATH); no cluster object is touched.
+        run: bash atomics/T1190/src/emulate.sh all
 
       - &apiserver-collect
         name: Collect the audit log and the node sensor log
@@ -1154,6 +1183,7 @@ jobs:
       - *apiserver-emulate-9034
       - *apiserver-emulate-9035
       - *apiserver-emulate-9039
+      - *apiserver-emulate-9040
       - *apiserver-collect
 
       - name: Validate detections under the recommended policy (expected misses named)

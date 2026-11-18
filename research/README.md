@@ -156,6 +156,7 @@ filing wave; ATT&CK revokes and renames IDs between releases.
 | TRR9037  | T1098.001, T1199 | IAM Roles Anywhere External-CA Trust Anchor | AWS | [`trr9037/aws`](trr9037/aws/README.md) |
 | TRR9038  | T1562.008 | Cloud Logging Sink/Bucket/Exclusion Tamper | GCP | [`trr9038/gcp`](trr9038/gcp/README.md) |
 | TRR9039  | T1557, T1565 | Service Traffic Hijack Through Endpoints or EndpointSlice Manipulation | Kubernetes | [`trr9039/k8s`](trr9039/k8s/README.md) |
+| TRR9040  | T1190, T1499.004 | Exploited Java Service Crash: HotSpot Fatal Error Log | Linux | [`trr9040/lin`](trr9040/lin/README.md) |
 
 Which Kubernetes rule works on which platform (EKS, AKS, GKE, OpenShift, k3s): [`detections/k8s/PLATFORMS.md`](../detections/k8s/PLATFORMS.md).
 
