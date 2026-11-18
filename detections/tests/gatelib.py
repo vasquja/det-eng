@@ -50,7 +50,8 @@ Rules that keep the suite hermetic:
 
 Run the suite from the repository root (README.md in this directory):
 
-    python3 -B detections/tests/gatelib.py --run             # in parallel, as CI does
+    python3 -B detections/tests/gatelib.py --run             # in parallel
+    python3 -B detections/tests/gatelib.py --run --shard 2/3 # one shard, as a leg of CI does
     python3 -B -m unittest discover -s detections/tests -v   # in sequence
 """
 
@@ -62,10 +63,12 @@ import dataclasses
 import functools
 import glob as _glob
 import json
+import math
 import os
 import re
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -91,6 +94,10 @@ RECURSION_ERROR = r"\(RecursionError: [^()]*(?:\([^()]*\)[^()]*)*\)"
 # runner, not GitHub, ends a class that hangs, so the log still holds the output of
 # every class and the job summary is written.
 CLASS_TIMEOUT = 600
+# The table of class weights for `gatelib.py --run --shard K/N`: the CPU seconds of
+# each test class, that is the user and system time of the class process and of the
+# processes that it waits for (class_weights(), shard_classes()).
+CLASS_SECONDS = os.path.join(TESTS, "class_seconds.json")
 
 # Parts of the repository for Tree(parts) and GateCase.PARTS. A part is a path
 # relative to the repository root (a file, a directory, or a glob pattern).
@@ -474,7 +481,9 @@ def gap_report(gaps=None, markdown=False, states=False):
     """The list of known gaps as text (or a Markdown table).
 
     states  True after a run of the suite: say for each gap if its test saw the
-            gap open in that run (`open`), or did not run (`not run`)."""
+            gap open in that run (`open`), or did not run (`not run`). After a run
+            of one shard (`--shard K/N`), a gap whose test only the classes of
+            other shards collect is `in shard J/N` (`in shards J/N and L/N`)."""
     gaps = _sorted_gaps(gaps)
     if markdown:
         lines = [f"### Known gaps of the gates ({len(gaps)})", "",
@@ -491,7 +500,8 @@ def gap_report(gaps=None, markdown=False, states=False):
     for g in gaps:
         lines += [f"  {g.id}", f"      gate:   {g.gate}", f"      today:  {g.today}",
                   f"      closes: {g.closes} ({ROADMAP[g.closes]})"]
-        lines += [f"      state:  {g.state} in this run"] if states else []
+        lines += [f"      state:  {g.state}" + (", not in this run" if _in_other_shards(g)
+                                                else " in this run")] if states else []
         lines += [f"      reason: {g.reason}", f"      test:   {g.test}"]
     return "\n".join(lines) + "\n"
 
@@ -1288,19 +1298,49 @@ class StartedTogether(GateCase):
 # call that `python -m unittest -v <class>` makes, and then the counts of its
 # TestResult as JSON in a file (argument 2). The runner takes the counts from that
 # file. It reads no line of the text that unittest prints: that text is for the log,
-# and its format differs between Python versions.
+# and its format differs between Python versions. Beside the counts, the file holds
+# the CPU seconds of the class (`cpu`): the user and system time of the class
+# process (RUSAGE_SELF) and of each process that it waited for (RUSAGE_CHILDREN:
+# the gates that its tests ran, and the processes that they waited for).
 _ONE_CLASS = (
-    "import json, sys, unittest\n"
+    "import json, resource, sys, unittest\n"
     "result = unittest.main(module=None, argv=['unittest', '-v', sys.argv[1]],\n"
     "                       exit=False).result\n"
+    "cpu = sum(usage.ru_utime + usage.ru_stime for usage in (\n"
+    "    resource.getrusage(resource.RUSAGE_SELF),\n"
+    "    resource.getrusage(resource.RUSAGE_CHILDREN)))\n"
     "with open(sys.argv[2], 'w', encoding='utf-8') as fh:\n"
-    "    json.dump({'ran': result.testsRun, 'skipped': len(result.skipped)}, fh)\n"
+    "    json.dump({'ran': result.testsRun, 'skipped': len(result.skipped), 'cpu': cpu}, fh)\n"
     "sys.exit(0 if result.wasSuccessful() else 1)\n")
 
 
-def _discover():
+def _cpu_seconds(counts):
+    """The CPU seconds of a class from its counts file (_ONE_CLASS, read as JSON), or
+    None when they are not known: no counts (the class was stopped, or its process
+    died), no value `cpu`, or a value that is not a finite number >= 0."""
+    value = counts.get("cpu") if isinstance(counts, dict) else None
+    if type(value) not in (int, float):
+        return None
+    try:
+        value = float(value)
+    except OverflowError:       # an int that no float can hold
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value + 0.0          # -0.0 gives 0.0
+
+
+def _discover(gap_classes=None):
     """{`module.Class`: number of tests} of every test class under TESTS. A test
-    module that does not import is an error: its tests would silently not run."""
+    module that does not import is an error: its tests would silently not run.
+
+    gap_classes  a dict: _discover() adds {gap id: the set of `module.Class` that
+                 collect the test of the gap} for each known gap whose test
+                 discovery collects. A test that a class inherits (from a mixin
+                 that is no TestCase, or from another TestCase) is collected by each
+                 TestCase that holds it, and a class that overrides the test without
+                 the marker does not collect the gap. A gap whose test no class
+                 collects is not in the dict."""
     loader = unittest.TestLoader()
     suite = loader.discover(TESTS, pattern="test_*.py", top_level_dir=TESTS)
     if loader.errors:
@@ -1314,32 +1354,180 @@ def _discover():
             else:
                 name = test.id().rsplit(".", 1)[0]
                 classes[name] = classes.get(name, 0) + 1
+                if gap_classes is not None:
+                    # The method that this class runs for the test: a marked one
+                    # holds its Gap (known_gap()).
+                    method = getattr(type(test), getattr(test, "_testMethodName", ""), None)
+                    gap = getattr(method, "known_gap", None)
+                    if isinstance(gap, Gap):
+                        gap_classes.setdefault(gap.id, set()).add(name)
 
     walk(suite)
     return classes
 
 
+def class_weights(path=CLASS_SECONDS):
+    """{`module.Class`: CPU seconds} from the table of class weights (CLASS_SECONDS).
+
+    The file is a JSON object: `about` (a text) and `seconds` ({`module.Class`: the
+    CPU seconds of the class}). A table that is not of this form, that holds one key
+    two times, or that gives a class a number that is not finite and above 0 (also
+    `true`), raises ValueError: --shard then fails, and does not split the suite by
+    numbers that it cannot trust. A file that cannot be read raises OSError."""
+    def pairs(items):
+        keys = [key for key, _value in items]
+        doubled = sorted({key for key in keys if keys.count(key) > 1})
+        if doubled:
+            raise ValueError(f"{os.path.basename(path)} holds the key {doubled[0]!r} two times")
+        return dict(items)
+
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh, object_pairs_hook=pairs)
+    name = os.path.basename(path)
+    if not (isinstance(doc, dict) and sorted(doc) == ["about", "seconds"]
+            and isinstance(doc["about"], str) and isinstance(doc["seconds"], dict)):
+        raise ValueError(f"{name} is not an object with the keys `about` (a text) and "
+                         "`seconds` (an object)")
+    for test_class, seconds in doc["seconds"].items():
+        if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(f"{name}: the seconds of {test_class} are {seconds!r}, not a "
+                             "number above 0")
+    return doc["seconds"]
+
+
+def _default_weight(weights):
+    """The weight of a class that `weights` does not hold: the median of `weights`, or 1
+    when it is empty."""
+    return statistics.median(weights.values()) if weights else 1
+
+
+def _weights_of(names, weights):
+    """{name: weight} for each of `names`: its CPU seconds in `weights`, or the median
+    of `weights` for a name that `weights` does not hold (1 when it is empty)."""
+    default = _default_weight(weights)
+    return {name: weights.get(name, default) for name in names}
+
+
+def shard_classes(names, weights, count):
+    """The test classes `names` (in the order of discovery) in `count` shards: a list
+    of `count` lists, each in the order of `names`. Each class is in one shard.
+
+    Longest processing time first: the classes, from the heaviest to the lightest
+    (two classes of the same weight in the order of their names), go one by one to
+    the shard that has the least weight so far (of two such shards, the one with the
+    lower number). The weight of a class is its CPU seconds in `weights`; a class
+    that `weights` does not hold weighs the median of `weights` (1 when it is empty).
+    The result depends only on the set of names and on `weights`."""
+    weight = _weights_of(names, weights)
+    loads, members = [0] * count, [set() for _ in range(count)]
+    for name in sorted(weight, key=lambda n: (-weight[n], n)):
+        lightest = min(range(count), key=lambda shard: (loads[shard], shard))
+        loads[lightest] += weight[name]
+        members[lightest].add(name)
+    return [[name for name in names if name in member] for member in members]
+
+
+def _shard(text):
+    """The value of --shard: `K/N`, two whole numbers with 1 <= K <= N."""
+    found = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", text)
+    if not found or int(found.group(1)) > int(found.group(2)):
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: give K/N, two whole numbers with 1 <= K <= N (2/3: the second of "
+            "three shards)")
+    return int(found.group(1)), int(found.group(2))
+
+
+def gap_shards(gap_classes, parts):
+    """{gap id: the set of the numbers (1 to N) of the shards that count the known
+    gap}: each shard that holds a class that collects the test of the gap. The test
+    of the gap runs in each of these shards. `gap_classes` is that of _discover(),
+    `parts` the shards of shard_classes(). A gap whose test no class collects is not
+    in the result, because the runner cannot tell which shard runs its test:
+    run_suite() counts such a gap in each shard and fails each run for it."""
+    home = {name: number for number, names in enumerate(parts, 1) for name in names}
+    return {gap_id: {home[name] for name in names} for gap_id, names in gap_classes.items()}
+
+
+# Why _discover() gives a known gap no class that collects its test. run_suite() and
+# test_suite.GateTestShards give this text.
+NOT_COLLECTED_CAUSES = (
+    "The likely causes: the marked method is not a method `test_...` of a TestCase; a "
+    "decorator above @gatelib.known_gap does not use functools.wraps; a class overrides "
+    "the marked test without the marker")
+
+
+def _other_shards(parts, shards):
+    """The state of a known gap whose test only the classes of the shards `parts`
+    collect: `in shard 2/3`, `in shards 1/3 and 3/3`."""
+    names = [f"{part}/{shards}" for part in sorted(parts)]
+    return (f"in shard {names[0]}" if len(names) == 1
+            else f"in shards {', '.join(names[:-1])} and {names[-1]}")
+
+
+def _in_other_shards(gap):
+    """True when a run of one shard did not count the gap: no class of the shard
+    collects its test, and a class of another shard does (_other_shards())."""
+    return gap.state.startswith(("in shard ", "in shards "))
+
+
 def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skips=False,
-              summary=None):
+              summary=None, shard=None, weights=None):
     """Run the suite with one Python process for each test class (_ONE_CLASS: what
     `python -m unittest -v <class>` runs), `jobs` at a time, and print each class's
     output when it ends. The tests and their verdicts are those of `python -m
     unittest discover`; only the wall time differs, because the gates of different
-    classes run at the same time.
+    classes run at the same time. The line of each class gives its wall seconds and
+    its CPU seconds (_ONE_CLASS), or `CPU not known` when its process wrote none (the
+    class was stopped, or its process died).
 
     timeout   seconds for one class. A class that needs more is stopped and fails
               the run; the output that it gave until then is printed.
     no_skips  a skipped test fails the run (for CI, where every tool is installed).
     summary   a file: the verdict, the counts and the known gaps are added to it as
               Markdown (the job summary of GitHub Actions).
+    shard     (K, N): run only the classes of shard K of N (shard_classes(), with
+              `weights`, by default class_weights()). Not with `only`. The run
+              starts the classes of the shard from the heaviest to the lightest,
+              and prints them in the order of discovery.
 
     Sets the state of each known gap that a test saw open in this run. Returns 0
     only when every class ran all of its tests and none failed, and, for a run of
-    the whole suite, when the test of every known gap ran.
+    the whole suite or of a shard, when the test of every known gap of that run
+    ran and a class of the suite collects the test of each known gap. The classes
+    that collect the test of a gap are those of _discover(): a test on a mixin is
+    collected by each TestCase that inherits it. The known gaps of a shard are
+    those whose test a class of the shard collects (gap_shards(): the test runs in
+    each shard that holds such a class), and those whose test no class of the suite
+    collects. A gap whose test only the classes of other shards collect is `in
+    shard J/N`, and does not fail the shard. A gap whose test no class collects
+    fails each run of the whole suite and each run of a shard, also when its test
+    ran and saw the gap open (NOT_COLLECTED_CAUSES gives the likely causes): the
+    runner cannot tell which shard runs such a test.
     """
+    gap_classes = {}
+    found = _discover(gap_classes)
     classes = collections.OrderedDict(
-        (name, count) for name, count in _discover().items()
+        (name, count) for name, count in found.items()
         if not only or any(word in name for word in only))
+    counted, start_order = {}, list(classes)
+    if shard:
+        if only:
+            raise ValueError("run_suite: give `shard` or `only`, not both")
+        number, shards = shard
+        weights = class_weights() if weights is None else weights
+        parts = shard_classes(list(found), weights, shards)
+        counted = gap_shards(gap_classes, parts)
+        classes = collections.OrderedDict((name, found[name]) for name in parts[number - 1])
+        if not classes:
+            empty = (f"shard {number}/{shards} holds no test class: the suite has "
+                     f"{len(found)} test class(es)")
+            print(empty, file=out)
+            if summary:
+                with open(summary, "a", encoding="utf-8") as fh:
+                    fh.write(f"{_heading(shard, False)}\n\n{empty}.\n")
+            return 1
+        weight = _weights_of(classes, weights)
+        start_order = sorted(classes, key=lambda name: (-weight[name], name))
     if not classes:
         print("no test class" + (f" matches {' '.join(only)}" if only else " found"), file=out)
         return 1
@@ -1356,7 +1544,7 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
 
     def run_class(name):
         start = time.monotonic()
-        counts_file = os.path.join(run_dir, name + ".json")
+        counts_file, counts = os.path.join(run_dir, name + ".json"), None
         try:
             done = subprocess.run([PYTHON, "-B", "-c", _ONE_CLASS, name, counts_file],
                                   cwd=TESTS, env=env, stdin=subprocess.DEVNULL,
@@ -1371,21 +1559,30 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
                 "what it gave until then)\n")
         try:
             with open(counts_file, encoding="utf-8") as fh:
-                found = json.load(fh)
-            ran, skipped = int(found["ran"]), int(found["skipped"])
+                counts = json.load(fh)
+            ran, skipped = int(counts["ran"]), int(counts["skipped"])
         except (OSError, ValueError, KeyError, TypeError):
             ran = skipped = 0       # the process did not end its tests (stopped, or it died)
-        return (name, code, ran, skipped, time.monotonic() - start, text)
+        return (name, code, ran, skipped, _cpu_seconds(counts), time.monotonic() - start, text)
 
     start = time.monotonic()
-    failed, skips, total = [], collections.OrderedDict(), 0
+    # The CPU seconds of the classes whose CPU is known, and the number of the others.
+    failed, skips, total, cpu_spent, no_cpu = [], collections.OrderedDict(), 0, 0.0, 0
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            for name, code, ran, skipped, seconds, text in pool.map(run_class, classes):
+            # The pool starts the classes in start_order, and the output comes in the
+            # order of discovery.
+            started = {name: pool.submit(run_class, name) for name in start_order}
+            for name, code, ran, skipped, cpu, seconds, text in (started[name].result()
+                                                                 for name in classes):
                 if code == 0 and ran == 0 and skipped:
                     # unittest.SkipTest in setUpClass: every test of the class is skipped.
                     ran = skipped = classes[name]
                 total += ran
+                if cpu is None:
+                    no_cpu += 1
+                else:
+                    cpu_spent += cpu
                 verdict = "ok"
                 if code == "timeout":
                     verdict = f"FAILED (stopped after {timeout:g} s)"
@@ -1398,7 +1595,9 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
                 if skipped:
                     skips[name] = skipped
                 print(f"===== {name}: {verdict}, {ran} test(s)"
-                      + (f" ({skipped} skipped)" if skipped else "") + f", {seconds:.1f} s", file=out)
+                      + (f" ({skipped} skipped)" if skipped else "") + f", {seconds:.1f} s"
+                      + (" (CPU not known)" if cpu is None else f" (CPU {cpu:.1f} s)"),
+                      file=out)
                 print("".join(f"    {line}\n" for line in text.rstrip("\n").split("\n")), end="",
                       file=out)
                 out.flush()
@@ -1412,6 +1611,27 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
     counts = (f"{len(classes)} test class(es), {total} test(s), {jobs} at a time, "
               f"{time.monotonic() - start:.1f} s")
     notes = []
+    if shard:
+        # The CPU seconds of the classes of the shard in this run beside those of
+        # the table: when they drift apart, update the table (README.md, "CI"). CPU
+        # seconds and not wall seconds: a class takes longer when heavy classes run
+        # beside it, and its CPU grows much less than its wall time. The sum holds
+        # only the classes whose CPU is known, and the line gives the number of the
+        # others. A class that the table does not hold weighs the default
+        # (_weights_of()), and the line gives the number of such classes.
+        this_run = f"{cpu_spent:.1f} in this run" + (
+            f" ({no_cpu} class(es) without a CPU time)" if no_cpu else "")
+        missing = [name for name in classes if name not in weights]
+        table = f"{sum(weight.values()):.1f} by {os.path.basename(CLASS_SECONDS)}"
+        if missing:
+            table += (f" ({len(missing)} class(es) not in it, at the median "
+                      f"{_default_weight(weights):.1f} s)" if weights else
+                      f" ({len(missing)} class(es) not in it, at {_default_weight(weights):.1f} "
+                      "s, as the table is empty)")
+        counts = (f"shard {number}/{shards}: {len(classes)} of {len(found)} test class(es), "
+                  f"{total} test(s), {jobs} at a time, {time.monotonic() - start:.1f} s; the "
+                  f"CPU seconds of its classes: {this_run}, {table}")
+        notes.append(f"classes of shard {number}/{shards}: {', '.join(classes)}")
     if skips:
         notes.append(f"{sum(skips.values())} test(s) skipped: "
                      + ", ".join(f"{name} ({count})" for name, count in skips.items()))
@@ -1421,24 +1641,48 @@ def run_suite(jobs=None, only=(), timeout=CLASS_TIMEOUT, out=sys.stdout, no_skip
         notes.append("FAILED: --no-skips is set, and test(s) were skipped (the lines "
                      "`skipped '...'` above give the reasons)")
     # A run of the whole suite in which no class failed must see every known gap
-    # open. A gap whose test did not run is not tested at all: its marker is on a
-    # method that unittest does not collect, or in a class that is no TestCase. (A
-    # test that was skipped is counted above: its class is in `skips`.)
+    # open. A gap whose test did not run is not tested at all. (A test that was
+    # skipped is counted above: a class that collects it is in `skips`.) A run of a
+    # shard counts the gaps whose test a class of the shard collects (gap_shards()),
+    # and those whose test no class of the suite collects.
+    if shard:
+        for gap in KNOWN_GAPS.values():
+            numbers = counted.get(gap.id)
+            if numbers and number not in numbers:
+                gap.state = _other_shards(numbers, shards)
     not_run = [] if only or failed else sorted(
         gap.id for gap in KNOWN_GAPS.values()
-        if gap.state != "open" and gap.test.rsplit(".", 1)[0] not in skips)
+        if gap.state == "not run" and not gap_classes.get(gap.id, set()) & skips.keys())
     if not_run:
         notes.append("FAILED: the test of these known gap(s) did not run: " + ", ".join(not_run))
-    code = 1 if failed or not_run or (skips and no_skips) else 0
+    # A gap whose test no class collects fails each run of the whole suite and of a
+    # shard, also when its test ran (and saw the gap open, or failed): the marked
+    # method is not a test that unittest collects with its marker, so a run of a
+    # shard cannot tell which shard runs it, and the list of the gaps cannot trust
+    # its state.
+    not_collected = [] if only else sorted(
+        gap.id for gap in KNOWN_GAPS.values() if gap.id not in gap_classes)
+    if not_collected:
+        notes.append("FAILED: no test class collects the marked test of these known gap(s): "
+                     f"{', '.join(not_collected)}. {NOT_COLLECTED_CAUSES}.")
+    code = 1 if failed or not_run or not_collected or (skips and no_skips) else 0
     print("\n" + "\n".join([counts] + notes + (["OK"] if code == 0 else [])), file=out)
     if summary:
         still_open = sum(1 for gap in KNOWN_GAPS.values() if gap.state == "open")
+        elsewhere = sum(1 for gap in KNOWN_GAPS.values() if _in_other_shards(gap))
         with open(summary, "a", encoding="utf-8") as fh:
-            fh.write(f"## Gate tests: {'passed' if code == 0 else 'FAILED'}\n\n{counts}; "
-                     f"{len(KNOWN_GAPS)} known gap(s), {still_open} seen open in this run.\n\n"
+            fh.write(f"{_heading(shard, code == 0)}\n\n{counts}; {len(KNOWN_GAPS)} known gap(s)"
+                     + (f", {len(KNOWN_GAPS) - elsewhere} of them in this shard" if shard else "")
+                     + f", {still_open} seen open in this run.\n\n"
                      + "".join(f"- {note}\n" for note in notes) + ("\n" if notes else "")
                      + gap_report(markdown=True, states=True))
     return code
+
+
+def _heading(shard, passed):
+    """The first line of the job summary of a run (of one shard)."""
+    return ("## Gate tests" + (f", shard {shard[0]}/{shard[1]}" if shard else "") + ": "
+            + ("passed" if passed else "FAILED"))
 
 
 def main(argv=None):
@@ -1463,6 +1707,11 @@ def main(argv=None):
     ap.add_argument("--summary", metavar="PATH",
                     help="with --run: add the verdict, the counts and the known gaps to "
                          "PATH as Markdown (\"$GITHUB_STEP_SUMMARY\")")
+    ap.add_argument("--shard", type=_shard, metavar="K/N",
+                    help="with --run: run only the test classes of shard K of N (1 <= K <= N). "
+                         "The shards split the classes by their CPU seconds in "
+                         f"{os.path.basename(CLASS_SECONDS)}; each class is in one shard. "
+                         "Not with class names")
     ap.add_argument("only", nargs="*",
                     help="with --run: only the classes whose `module.Class` holds one of these")
     args = ap.parse_args(argv)
@@ -1470,30 +1719,45 @@ def main(argv=None):
         ap.print_help()
         return 0
     if not args.run and (args.only or args.no_skips or args.summary or args.jobs
-                         or args.class_timeout is not None):
-        ap.error("--jobs, --class-timeout, --no-skips, --summary and class names need --run")
+                         or args.class_timeout is not None or args.shard):
+        ap.error("--jobs, --class-timeout, --no-skips, --summary, --shard and class names "
+                 "need --run")
     if args.class_timeout is not None and args.class_timeout <= 0:
         ap.error("--class-timeout: give a number of seconds above 0")
+    if args.shard and args.only:
+        ap.error("--shard runs the classes of one shard: give no class names with it")
     # The test modules import `gatelib`, not `__main__`: use the registry of that module.
     sys.path.insert(0, TESTS)
     import gatelib as lib
 
+    def failed_before_the_run(why):
+        """No test ran, and run_suite() wrote nothing: the job summary says why."""
+        if args.run and args.summary:
+            with open(args.summary, "a", encoding="utf-8") as fh:
+                fh.write(f"{lib._heading(args.shard, False)}\n\n{why}\n")
+        return 1
+
+    weights = None
+    if args.shard:
+        try:
+            weights = lib.class_weights()
+        except (OSError, ValueError) as error:
+            print(f"--shard: the table of class weights cannot be used: {error}", file=sys.stderr)
+            return failed_before_the_run("The table of class weights cannot be used, so no "
+                                         "test ran. The log of the step holds the error.")
     code = 0
     try:
         if args.run:
             code = lib.run_suite(args.jobs, args.only, out=sys.stderr if args.json else sys.stdout,
                                  timeout=args.class_timeout or lib.CLASS_TIMEOUT,
-                                 no_skips=args.no_skips, summary=args.summary)
+                                 no_skips=args.no_skips, summary=args.summary,
+                                 shard=args.shard, weights=weights)
         else:
             lib._discover()
     except ImportError as error:
         print(error, file=sys.stderr)
-        if args.run and args.summary:
-            # No test ran, and run_suite() wrote nothing: the job summary says why.
-            with open(args.summary, "a", encoding="utf-8") as fh:
-                fh.write("## Gate tests: FAILED\n\nA test module does not import, so no test "
-                         "ran. The log of the step holds the error.\n")
-        return 1
+        return failed_before_the_run("A test module does not import, so no test ran. The log "
+                                     "of the step holds the error.")
     if args.json:
         print(json.dumps(lib.gap_list(), indent=2))
     else:

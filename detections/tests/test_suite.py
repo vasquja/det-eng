@@ -5,7 +5,13 @@ Gate tests, group `suite`: rules that hold for the gates and the suite as a whol
                       step, or one test of this class for each self-test that no
                       workflow runs
     GateTestsJob      the gate-tests job of detection-quality.yml runs every test of
-                      this suite, on every pull request, and fails when a test fails
+                      this suite, on every pull request, and fails when a test fails;
+                      each leg of its matrix runs one shard (--shard K/3)
+    GateTestShards    the shards of the suite hold each class one time, a class of
+                      the suite collects the test of each known gap, the test of a
+                      gap runs in each shard that holds a class that collects it,
+                      and each entry of the table of class weights names a class of
+                      the suite
     EmulationScriptsJob  the emulation-scripts job of lint-trr.yml runs every test of
                       atomics/tests/ on every pull request, fails when a test fails
                       or a test module does not load, and the suite loses no test
@@ -110,28 +116,53 @@ for _script in SelfTests.RUN_HERE:
 
 
 class GateTestsJob(gatelib.GateCase):
-    """The gate-tests job of detection-quality.yml: the job that runs this suite."""
+    """The gate-tests job of detection-quality.yml: the job that runs this suite.
+
+    The job is a matrix of SHARDS legs (the owner allowed two or three runners on
+    2026-11-17; the job uses three). Each leg runs one shard of the test classes
+    (`gatelib.py --shard K/SHARDS`); GateTestShards proves that the shards hold each
+    class one time."""
 
     WORKFLOW = "detection-quality.yml"
     COMMAND = "detections/tests/gatelib.py"
+    SHARDS = 3
 
     def suite(self, verdict):
-        """A constructed suite of one test, which passes or fails, beside a copy of
-        the harness."""
-        tree = gatelib.Tree(("detections/tests/gatelib.py",))
+        """A constructed suite of three classes, test_one.A, B and C, beside a copy of
+        the harness and of its table of class weights. The table does not hold
+        them, so each weighs the same, and shard K of 3 holds the K-th of them. The
+        test of B passes or fails (`verdict`); the tests of A and C pass."""
+        tree = gatelib.Tree(("detections/tests/gatelib.py", "detections/tests/class_seconds.json"))
         self.addCleanup(tree.cleanup)
-        tree.write("detections/tests/test_one.py",
-                   "import unittest\n\n\n"
-                   "class One(unittest.TestCase):\n"
-                   f"    def test_a(self):\n        {verdict}\n")
+        tree.write("detections/tests/test_one.py", "import unittest\n" + "".join(
+            f"\n\nclass {name}(unittest.TestCase):\n"
+            f"    def test_a(self):\n        {verdict if name == 'B' else 'pass'}\n"
+            for name in "ABC"))
         return tree
+
+    def run_leg(self, tree, shard):
+        """The step of the job, as the leg `shard` of the matrix runs it."""
+        step = gatelib.ci_step(self.WORKFLOW, "gate-tests", self.COMMAND)
+        return tree.run_step(step, expressions={"matrix.shard": shard})
 
     def test_ci_runs_every_test_and_allows_no_skip(self):
         commands = gatelib.ci_commands(self.COMMAND)
         self.assertEqual(commands, ["python3 -B detections/tests/gatelib.py --run --no-skips "
+                                    f"--shard ${{{{ matrix.shard }}}}/{self.SHARDS} "
                                     '--summary "$GITHUB_STEP_SUMMARY"'])
-        # The same command, without the two options of CI, is the documented one.
+        # The same command, without the options of CI, is the documented one.
         self.assert_documented("python3 -B detections/tests/gatelib.py --run")
+
+    def test_job_runs_each_shard_on_a_runner_of_its_own(self):
+        """The matrix is exactly the shards 1 to SHARDS of the command: a value less
+        would leave the classes of a shard untested, a value more would fail, and
+        `max-parallel` would put the legs one after the other. fail-fast is false: a
+        leg that fails does not cancel the other legs, so each failure is in the
+        log. The name of each leg names its shard."""
+        job = self.workflow()["jobs"]["gate-tests"]
+        self.assertEqual(job["strategy"], {"fail-fast": False,
+                                           "matrix": {"shard": list(range(1, self.SHARDS + 1))}})
+        self.assertEqual(job["name"], f"gate-tests (shard ${{{{ matrix.shard }}}}/{self.SHARDS})")
 
     def workflow(self):
         import yaml     # PyYAML: in detections/requirements.txt
@@ -161,8 +192,10 @@ class GateTestsJob(gatelib.GateCase):
         the classes after the one that hangs, and no job summary. So the runner's
         timeout for one class (the step gives no --class-timeout, so it is
         gatelib.CLASS_TIMEOUT) must end first, with time left for the other classes
-        (the suite must run in less than four minutes on a GitHub runner; today it
-        takes about three and a half) and one minute for the steps before the tests."""
+        (a shard must run in less than four minutes on a GitHub runner; with the
+        split by CPU seconds, the legs of run 44203961149 took 187, 191 and 201 s)
+        and one minute for the steps before the tests. Each leg of the matrix has
+        this timeout."""
         job_seconds = self.workflow()["jobs"]["gate-tests"]["timeout-minutes"] * 60
         self.assertNotIn("--class-timeout", gatelib.ci_commands(self.COMMAND)[0])
         self.assertGreaterEqual(job_seconds - gatelib.CLASS_TIMEOUT, 300,
@@ -171,23 +204,153 @@ class GateTestsJob(gatelib.GateCase):
         # One gate run that hangs is reported by its own test, with the gate's output.
         self.assertLess(gatelib.DEFAULT_TIMEOUT, gatelib.CLASS_TIMEOUT)
 
+    @staticmethod
+    def summary(tree):
+        """The job summary that the steps of `tree` wrote; the file is then empty for
+        the next step."""
+        path = tree.out("github/github_step_summary")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        open(path, "w", encoding="utf-8").close()
+        return text
+
     def test_ci_step_passes_and_writes_the_summary(self):
-        """CONTROL of the step: a suite that passes."""
-        step = gatelib.ci_step(self.WORKFLOW, "gate-tests", self.COMMAND)
+        """CONTROL of the step: a suite that passes. Each leg of the matrix runs one
+        class of the three, and the three legs run each class one time."""
         tree = self.suite("pass")
-        gatelib.assert_accepts(tree.run_step(step), r"^1 test class\(es\), 1 test\(s\), ")
-        with open(tree.out("github/github_step_summary"), encoding="utf-8") as fh:
-            self.assertRegex(fh.read(), r"(?m)^## Gate tests: passed$")
+        ran = []
+        for shard in range(1, self.SHARDS + 1):
+            with self.subTest(shard=shard):
+                result = self.run_leg(tree, shard)
+                gatelib.assert_accepts(result, rf"^shard {shard}/{self.SHARDS}: 1 of 3 test "
+                                               r"class\(es\), 1 test\(s\), ")
+                ran += re.findall(r"(?m)^===== (\S+): ok, ", result.stdout)
+                self.assertRegex(self.summary(tree),
+                                 rf"(?m)^## Gate tests, shard {shard}/{self.SHARDS}: passed$")
+        self.assertEqual(ran, ["test_one.A", "test_one.B", "test_one.C"])
 
     def test_ci_step_fails_when_a_test_fails(self):
         """Run the step as GitHub Actions does, on a suite with one failing test: the
-        exit code of the runner must reach the step."""
-        step = gatelib.ci_step(self.WORKFLOW, "gate-tests", self.COMMAND)
+        exit code of the runner must reach the step of the leg that holds the test,
+        and only that leg fails."""
         tree = self.suite("self.fail('planted failure')")
-        gatelib.assert_rejects(tree.run_step(step), r"^FAILED: 1 test class\(es\): test_one\.One$",
+        gatelib.assert_rejects(self.run_leg(tree, 2), r"^FAILED: 1 test class\(es\): test_one\.B$",
                                exit_code=1, crash_ok=True)
-        with open(tree.out("github/github_step_summary"), encoding="utf-8") as fh:
-            self.assertRegex(fh.read(), r"(?m)^## Gate tests: FAILED$")
+        self.assertRegex(self.summary(tree), rf"(?m)^## Gate tests, shard 2/{self.SHARDS}: FAILED$")
+        for shard in (1, 3):
+            gatelib.assert_accepts(self.run_leg(tree, shard), r"^OK$")
+
+
+class GateTestShards(unittest.TestCase):
+    """The shards of this suite (`gatelib.py --run --shard K/N`), on the real classes
+    and the real table of class weights (detections/tests/class_seconds.json).
+
+    For the N of the gate-tests job, and for N = 1 to 4, the shards hold each class
+    of the suite one time: no class is in two shards, and no class is in none. For
+    each known gap, at least one class of the suite collects its test (_discover():
+    also a test that a class inherits), and for each N the shards that count the gap
+    (gatelib.gap_shards(), which the runner uses) are the shards that hold a class
+    that collects its test: the test of a gap runs in each shard that holds a class
+    that collects it, so in one shard or more. The partition is the same in two
+    processes with different hash seeds, and for the classes in another order. Each
+    entry of the table names a class of the suite (a class that was renamed or
+    removed must leave the table) and gives it a number of seconds above 0. A class
+    that the table does not hold weighs the median: add it after its first run in CI."""
+
+    # What the processes print: the classes of the suite in the order of discovery,
+    # the table, the classes that collect the test of each known gap, and for each N
+    # the shards and the shards that count each known gap.
+    PLAN = (
+        "import json, sys\n"
+        "import gatelib\n"
+        "gap_classes = {}\n"
+        "classes = list(gatelib._discover(gap_classes))\n"
+        "weights = gatelib.class_weights()\n"
+        "print(json.dumps({\n"
+        "    'classes': classes, 'weights': weights,\n"
+        "    'gaps': {gap.id: sorted(gap_classes.get(gap.id, ()))\n"
+        "             for gap in gatelib.KNOWN_GAPS.values()},\n"
+        "    'shards': {n: gatelib.shard_classes(classes, weights, n)\n"
+        "               for n in map(int, sys.argv[1:])},\n"
+        "    'counted': {n: {gap: sorted(numbers) for gap, numbers in gatelib.gap_shards(\n"
+        "                   gap_classes, gatelib.shard_classes(classes, weights, n)).items()}\n"
+        "                for n in map(int, sys.argv[1:])},\n"
+        "    'reversed': {n: gatelib.shard_classes(classes[::-1], weights, n)\n"
+        "                 for n in map(int, sys.argv[1:])}}))\n")
+    COUNTS = sorted({1, 2, 3, 4, GateTestsJob.SHARDS})
+
+    @classmethod
+    def plan(cls, seed):
+        done = subprocess.run([gatelib.PYTHON, "-B", "-c", cls.PLAN, *map(str, cls.COUNTS)],
+                              capture_output=True, text=True, timeout=120, cwd=gatelib.TESTS,
+                              env=dict(os.environ, PYTHONHASHSEED=str(seed)), check=False)
+        if done.returncode != 0:
+            raise AssertionError("the plan of the shards failed:\n" + done.stderr)
+        return json.loads(done.stdout)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.first, cls.second = cls.plan(0), cls.plan(4242)
+
+    def test_the_suite_was_read(self):
+        """Not vacuous: the classes of the suite, the table and the known gaps."""
+        classes = self.first["classes"]
+        self.assertGreater(len(classes), 50, "the classes of the suite were not read")
+        self.assertIn("test_suite.GateTestShards", classes)
+        self.assertGreater(len(self.first["weights"]), 50, "the table of class weights was not read")
+        self.assertGreater(len(self.first["gaps"]), 0, "the known gaps were not read")
+
+    def test_each_class_is_in_one_shard(self):
+        classes = self.first["classes"]
+        for count in self.COUNTS:
+            with self.subTest(shards=count):
+                shards = self.first["shards"][str(count)]
+                self.assertEqual(len(shards), count)
+                self.assertEqual(sorted(name for shard in shards for name in shard), sorted(classes),
+                                 "a class is in two shards, or in none")
+                for shard in shards:
+                    self.assertTrue(shard, "a shard holds no class")
+                    self.assertEqual(shard, [name for name in classes if name in shard],
+                                     "a shard does not hold its classes in the order of discovery")
+
+    def test_the_partition_depends_only_on_the_classes_and_the_table(self):
+        """The same shards in a process with another hash seed, and for the classes in
+        the reverse order (each shard then in that order)."""
+        self.assertEqual(self.first, self.second)
+        for count in self.COUNTS:
+            with self.subTest(shards=count):
+                self.assertEqual([sorted(shard) for shard in self.first["reversed"][str(count)]],
+                                 [sorted(shard) for shard in self.first["shards"][str(count)]])
+
+    def test_the_test_of_each_known_gap_runs_in_the_shards_of_its_classes(self):
+        """A class of the suite collects the test of each known gap: a gap whose test
+        no class collects fails each shard and the run of the whole suite. And for
+        each N, the runner counts the gap in each shard that holds a class that
+        collects its test, and in no other shard: so the test of a gap runs in each
+        shard that holds a class that collects it, and in one shard or more."""
+        for gap, test_classes in self.first["gaps"].items():
+            with self.subTest(gap=gap):
+                self.assertTrue(test_classes, "no class of the suite collects the marked test "
+                                f"of the known gap. {gatelib.NOT_COLLECTED_CAUSES}.")
+                for count in self.COUNTS:
+                    holders = [k for k, shard in enumerate(self.first["shards"][str(count)], 1)
+                               if set(test_classes) & set(shard)]
+                    counted = self.first["counted"][str(count)].get(gap, [])
+                    self.assertTrue(counted, f"{count} shards: no shard counts the gap")
+                    self.assertEqual(counted, holders,
+                                     f"{count} shards: the classes that collect the test, "
+                                     f"{test_classes}, are in the shards {holders}, and the "
+                                     f"runner counts the gap in the shards {counted}")
+
+    def test_each_entry_of_the_table_is_a_class_with_seconds_above_0(self):
+        weights, classes = self.first["weights"], set(self.first["classes"])
+        self.assertEqual(sorted(set(weights) - classes), [],
+                         "class_seconds.json names classes that the suite does not hold: "
+                         "remove them (or rename them with their class)")
+        for name, seconds in weights.items():
+            with self.subTest(test_class=name):
+                self.assertIn(type(seconds), (int, float))
+                self.assertGreater(seconds, 0)
 
 
 class EmulationScriptsJob(gatelib.GateCase):
