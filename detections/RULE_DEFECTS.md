@@ -111,6 +111,7 @@ starts with an ID in another form (`### L14: <title>`).
 | [C12](#c12-aws_cognito_unauthenticated_identity_use-keyed-on-the-consoles-role-name) | `T1078.004/aws_cognito_unauthenticated_identity_use` | a renamed guest role is a miss; needs a live capture | false negative (documented) | low |
 | [C15](#c15-public-policy-rules-a-public-statement-after-the-fifth-and-scope-key-presence) | `T1537/aws_resource_policy_made_public`, `aws_efs_file_system_policy_made_public` | a public statement after the fifth fires unscoped; scope keys checked for presence | false positive | low |
 | [C19](#c19-gcp-delta-list-rules-a-binding-delta-with-an-iam-condition-is-missed-when-the-keys-are-sorted) | `T1098.001/gcp_workload_identity_federation_sa_binding`, `T1199/gcp_workforce_principalset_privileged_binding`, `T1098.003/gcp_public_iam_member_grant` (the delta path) | a binding delta that carries an IAM condition is missed on a store that sorts the keys of an object: the condition object comes between the parts that the pattern reads, and the pattern does not pass its closing brace; not verified against a real record | false negative | low |
+| [C21](#c21-entra_app_federated_credential_backdoor-a-github-actions-credential-for-a-repository-of-another-owner-is-missed) | `T1098.001/entra_app_federated_credential_backdoor` | a credential with the approved GitHub Actions issuer and a subject in a repository of another owner does not fire (the real record of splunk/attack_data that the rule misses): the rule reads only the issuer host, which each GitHub repository shares. That record also writes the keys of `newValue` in lower case, which the `Issuer` regex does not read (unverified as what Entra writes; captures from other sources give PascalCase) | false negative, description | high |
 | [K56](#k56-aws_eks_access_entry_cluster_admin_policy-a-namespace-scoped-secrets-grant-is-missed) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | a reads-Secrets policy scoped to a sensitive namespace (`kube-system`) reads those Secrets but trips only the medium chokepoint, not the graded rule; one CloudTrail record cannot weigh one namespace against another | false negative | medium |
 | [K57](#k57-aws_eks_access_entry_cluster_admin_policy-no-safe-sigma-predicate-for-a-cross-account-grant) | `T1098.006/aws_eks_access_entry_cluster_admin_policy` | no safe Sigma predicate raises fidelity on a cross-account grant: `principalArn\|fieldref\|contains: recipientAccountId` goes quiet when the attacker names its role with the victim account ID | false negative (documented) | low |
 | [K61](#k61-azure_privileged_role_assignment-a-custom-role-with-owner-equivalent-permissions-evades-the-built-in-guid-allowlist) | `T1098.003/azure_privileged_role_assignment` (TRR9036 A, B) | a custom role definition with Owner-equivalent permissions carries a tenant-specific GUID that is not on the built-in-role allowlist, so the body grade does not fire; the fix is a per-tenant privileged-role-GUID list | evasion | medium |
@@ -2450,6 +2451,181 @@ the current ones.
   `variants/expected.json` become stale and are removed; a positive with a conditional
   delta in a first sidecar of `gcp_public_iam_member_grant` fires in each key order; the
   entry closes.
+
+### C21. entra_app_federated_credential_backdoor: a GitHub Actions credential for a repository of another owner is missed
+
+- **Rule**: [`sigma/T1098.001/entra_app_federated_credential_backdoor.yml`](sigma/T1098.001/entra_app_federated_credential_backdoor.yml) (level high).
+- **Procedures**: TRR9013.AZR.A, TRR9013.AZR.B.
+- **Kind**: false negative, description. **Severity**: high: the rule misses a common
+  variant of its technique. By default, each GitHub Actions workflow gets a token with
+  the one issuer `https://token.actions.githubusercontent.com`, and each GitHub account
+  can run a workflow that asks for the Entra audience `api://AzureADTokenExchange`. So an
+  attacker who can write the credentials of an application or a service principal (the
+  precondition of procedure A) needs no OIDC issuer of their own: they trust a
+  repository that they own, under the issuer that the rule approves. An unapproved
+  issuer needs an issuer that the attacker hosts. The TRR9013 scope names this variant
+  ("GitHub Actions in an unexpected repo"), and it is the scenario of the dataset below.
+- **Problem**: the external-records gate (roadmap item R3) runs the rule on the pinned
+  dataset `T1098.001/azure_ad_federated_identity_credential/azure-audit` of
+  splunk/attack_data. The rule matches 0 of its 2 records. Line 1 is the attack: an
+  "Update service principal" audit event (`properties.category`
+  `ApplicationManagement`, `loggedByService` `Core Directory`, `result` `success`,
+  target type `ServicePrincipal`). Its modified property `FederatedIdentityCredentials`
+  goes from `[]` to one credential with the issuer
+  `https://token.actions.githubusercontent.com` and the subject
+  `repo:external-contractor/infra-automation:ref:refs/heads/main`. Line 2 is a benign
+  `DisplayName` update of the same service principal. Two causes keep the rule quiet on
+  line 1. The rule fires only when both are changed (probe below).
+  1. **The approved issuer is shared.** `selection_unapproved_issuer` reads only the
+     host of the issuer. GitHub gives that host to each repository of each owner. So a
+     credential with the GitHub issuer and a subject in a repository of another owner
+     (`repo:external-contractor/...`) is the backdoor, and the rule cannot see it: the
+     rule does not read the subject. No sidecar case, cloud fixture or benign-corpus
+     record has this shape. Each subject with the GitHub issuer has the owner
+     `trr9013-corp` or `example-org`, and a record whose credentials all have the
+     GitHub issuer is a near-miss or benign (the near-miss `approved-issuer-only` says
+     that only the issuer test keeps the rule quiet).
+  2. **The keys are in lower case.** The three `|re` values read the key `Issuer` with
+     a capital I. The `newValue` of line 1 writes the keys `name`, `issuer`, `subject`
+     and `audiences`. So an unapproved issuer in this shape is quiet too. Whether Entra
+     writes lower-case keys is **unverified**, and the evidence says that it does not
+     (Evidence, *source*).
+
+  Description: the coverage summary of [TRR9013](../research/trr9013/azr/README.md)
+  gives procedure B to this rule for an "`oldValue -> newValue` issuer/subject change",
+  and its alert condition names a broadened `Subject`. The rule reads neither: a
+  repoint that changes only the subject, to a repository of another owner, is quiet.
+  The description of the rule asks a pipeline to "also alert on a wildcarded/over-broad
+  Subject". A plain credential accepts no wildcard (only a flexible credential holds a
+  matching expression), so what makes the subject of a plain GitHub credential unsafe is
+  its owner and its repository. The rule and the TRR say that the
+  keys of `newValue` are PascalCase. The sources below agree, but neither cites a
+  capture.
+- **Evidence**:
+  - *external record*: splunk/attack_data at commit `4b19e4b6` (the pin of
+    [`external/SOURCES.json`](external/SOURCES.json)), file
+    `datasets/attack_techniques/T1098.001/azure_ad_federated_identity_credential/azure-audit.log`
+    (sha256 `68a71da7b6ee`), line 1. The report of the job `external-records` on `main`
+    at `6cbe66f` (detection-quality run 44245163826): `MISS
+    T1098.001/entra_app_federated_credential_backdoor.yml on
+    T1098.001/azure_ad_federated_identity_credential/azure-audit  0 of 2 record(s);
+    nearest line 1 (near-miss; one flip would fire it:
+    selection_unapproved_issuer.properties.targetResources)`. The yml of the dataset
+    describes the trust as "pointing the trust to an external GitHub Actions OIDC
+    issuer/repo not controlled by the tenant", and says: "Tenant specific details have
+    been replaced in the dataset including tenant id, user names, ips, etc."
+  - *probe* (`sigma_eval.py`, `sigma_explain.py`): line 1 with only its `newValue`
+    changed. Run from the root of the repository, after one run of
+    `check_external_records.py` (it puts the file in its cache):
+
+    ```python
+    import copy, json, os, sys; sys.path.insert(0, "detections")
+    import sigma_eval, sigma_explain
+    rule = "detections/sigma/T1098.001/entra_app_federated_credential_backdoor.yml"
+    cached = os.path.expanduser("~/.cache/det-eng/external/sha256/"
+                                "68a71da7b6ee2370fd29439c2590620061973f11f2938261b98e489017653425")
+    with open(cached, encoding="utf-8") as fh:            # check_external_records.py fills the cache
+        line1 = json.loads(fh.readline())
+    def probe(pascal_keys, issuer):
+        event = copy.deepcopy(line1)
+        prop = event["properties"]["targetResources"][0]["modifiedProperties"][0]
+        text = prop["newValue"].replace("https://token.actions.githubusercontent.com", issuer)
+        for key in ("name", "issuer", "subject", "audiences") if pascal_keys else ():
+            text = text.replace(f'"{key}":', f'"{key.capitalize()}":')
+        prop["newValue"] = text
+        flat = [sigma_eval.flatten(event)]
+        return (bool(sigma_eval.evaluate(sigma_eval.compile_rule(rule), flat)),
+                sigma_explain.judge_events(sigma_explain.load(rule), flat)[0].kind)
+    github, other = "https://token.actions.githubusercontent.com", "https://oidc.example.com"
+    print(probe(False, github))   # (False, 'near-miss'): line 1 as it is
+    print(probe(True, github))    # (False, 'near-miss'): PascalCase keys, the GitHub issuer
+    print(probe(False, other))    # (False, 'near-miss'): lower-case keys, another issuer
+    print(probe(True, other))     # (True, 'match'): both changed
+    ```
+
+    In each near-miss the one flip is
+    `selection_unapproved_issuer.properties.targetResources`. Line 2 as it is gives
+    `(False, 'near-miss')`: it holds `selection_fic_write` only.
+  - *source*, the letter case of the keys (**unverified** as what Entra writes): no
+    record in this repository, and no page of Microsoft Learn that was read, shows how
+    the audit log writes this property. Microsoft Learn gives lower camelCase only for
+    the Graph resource and its create request (`name`, `issuer`, `subject`,
+    `audiences`). The `newValue` of line 1 has exactly the keys and the key order of
+    that request example. Sources outside this repository give PascalCase, read on
+    2026-11-18: two redacted captures of "Update application" with the same ten keys in
+    the same order (`Name`, `Issuer`, `Subject`, `Id`, `Description`, `Audiences`,
+    `ClaimsMatchingExpressionValue`, `ClaimsMatchingExpressionLanguageVersion`,
+    `EncodingVersion`, `TrustedIssuer`): the Stratus Red Team page of
+    `entra-id.persistence.backdoor-application-fic` (commit `fa8880b`; a portal export
+    of a credential that the Graph Go SDK created with a camelCase request), and a
+    comment of 2026-10-21 on SigmaHQ/sigma pull request 6278 (read through a summary of
+    the page, not the raw page). Three production queries read PascalCase keys: the
+    Sentinel rule `FedCredCreatedForUnknownEntity` of Thomas Naunheim (since 2022-01-29),
+    the ITDR queries of Nicola Suter (also on "Update service principal", for a managed
+    identity) and the Elastic rule `498e4094-60e7-11f0-8847-f661ea17fbcd`. Line 1 has
+    neither the credential `Id`, nor the four internal keys, nor the element `Included
+    Updated Properties` of both captures. So the lower-case keys are probably a result
+    of how the record was made. No source shows that the casing differs between the
+    application and the service-principal path, or between creation tools.
+  - *source*, the subject: the GitHub OIDC reference (the github/docs source at commit
+    `1956c559`; docs.github.com was not reachable): the issuer of each workflow token is
+    `https://token.actions.githubusercontent.com`, the default subject is
+    `repo:<owner>/<repo>:...`, a repository created from 2026-07-15 gets the immutable
+    form `repo:<owner>@<id>/<repo>@<id>:...`, and the cloud side "must define at least
+    one condition, so that untrusted repositories can't request access tokens".
+    Microsoft Learn: the issuer, the subject and the audience must match the token
+    exactly and case-sensitively, and the value of a plain credential accepts no
+    wildcard (a flexible credential holds a `claimsMatchingExpression`).
+- **Fix** (proposed; a later pull request changes the rule):
+  1. Read the issuer key in each letter case: `[Ii]ssuer` in place of `Issuer` in the
+     three `|re` values (a character class is in the portable subset of
+     `check_sigma_regex.py`). Probe on a copy of the rule with that change: line 1 with
+     the issuer `https://oidc.example.com` fires (lower-case keys), and line 1 as it is
+     stays quiet. Also decide on a boundary before the key. The values have none, so the
+     key `TrustedIssuer` reads as an issuer: probe, line 1 with PascalCase keys, the
+     GitHub issuer and `"TrustedIssuer":"https://oidc.example.com"` fires the rule now.
+     Both captures write `TrustedIssuer` as null, and no source that was read says what
+     it holds.
+  2. For the GitHub issuer, also read the owner of the subject: fire when the owner is
+     not on a list of approved owners (`repo:<owner>/` and `repo:<owner>@<id>/`), with
+     placeholders that the deployer sets, as K57 proposes for accounts. A subject of a
+     custom template (`repository_owner:<owner>`, `job_workflow_ref:...`) or a flexible
+     credential (a null `Subject`, with the condition in
+     `ClaimsMatchingExpressionValue`) does not have that form: decide whether it fires.
+     Or add a rule of a lower level that fires on each credential write.
+
+  Prior art, read on 2026-11-18. Elastic `498e4094` alerts on each credential that is
+  created or added, and on a change of the issuer or the subject of a credential, with
+  no allowlist; it reads only "Update application", so it does not see line 1. Splunk
+  security_content `bfa745d4` (by the author of the dataset; it reads the lower-case key
+  `name`) and the Sentinel hunting query `2a7c50a9` flag each credential write. Datadog
+  `def-000-y2u` flags each credential write on "Update application" by a user. SigmaHQ
+  at `698f091` has no rule for this credential. The public rules that were found to
+  test the owner of the subject are community Sentinel content: the rule of Thomas
+  Naunheim (it joins the repository of the subject with the GitHub audit log) and the
+  hunting query of Nicola Suter (a watchlist of organisations).
+- **Then**: new sidecar cases: a positive with the shape of line 1 (the GitHub issuer, a
+  subject in a repository of another owner, lower-case keys) and its PascalCase twin; a
+  near-miss that is the same record with an approved owner, which breaks only the owner
+  item; and a positive for each new key spelling. The subjects of the existing cases
+  name the owners `trr9013-corp` and `example-org`: put them on the list, or the new
+  branch fires on near-misses and benign records (a change of an existing case is a
+  human decision, [Closing an entry](#closing-an-entry), step 2). The pair of
+  `check_external_records.py` on this dataset turns `FIRE` on line 1, and line 2 stays
+  quiet. Then the entry closes. Until then, a `known-miss` declaration of the owner (R3,
+  PR-3) can cite this entry.
+- **Not this defect: the second `MISS` of the rule.** The same report gives `MISS
+  T1098.001/entra_app_federated_credential_backdoor.yml on
+  T1098.001/azure_ad_service_principal_credentials/azure-audit  0 of 1 record(s);
+  nearest line 1 (near-miss; ...)`, with the same one flip. The one record of that
+  dataset (sha256 `0a6de8d20356`) is "Update application – Certificates and secrets
+  management": a client secret added (the modified property `KeyDescription`; its yml:
+  "Manually added new client credentials (secret and certificate)"). It holds no
+  `FederatedIdentityCredentials`. The description of the rule calls that a different
+  activity, and TRR9013 leaves it out of its scope. The record is a near-miss only
+  because `selection_fic_write` reads the category, the service and the result. So
+  the miss is correct for this rule: it needs an `n/a` declaration (`another
+  procedure:`) of the owner (R3, PR-3), not a defect entry.
 
 ### K56. aws_eks_access_entry_cluster_admin_policy: a namespace-scoped secrets grant is missed
 
