@@ -1,0 +1,48 @@
+title: JVM Fatal Error Log Created on a Linux Host
+id: 791ab77b-2bae-4445-910a-24ab5f38b511
+status: experimental
+description: |
+  Detects the creation of a HotSpot fatal error log (hs_err_pid<pid>.log). The
+  JVM writes this file when it crashes, in its working directory or, if that is
+  not writable, in the temporary directory.
+
+  CVE-2026-114938 ("Java4Shell", CISA alert of 2026-11-17) is an out-of-bounds
+  heap write in the x86-64 HotSpot Base64 decode intrinsic. Malformed Base64
+  that a service decodes before authentication can crash the JVM, and CISA asks
+  defenders to monitor for unexpected JVM crashes. A crash is the host-side
+  trace that a failed or repeated attempt leaves; a successful exploit or a
+  memory read that does not crash the JVM leaves no such file. The rule is not
+  specific to this CVE: any native JVM crash writes the same file.
+
+  This is a NODE sensor rule. It needs host file-event telemetry (file
+  integrity monitoring, auditd open/openat with PATH records, or an EDR agent),
+  mapped to TargetFilename and EventType.
+
+  Coverage gap: -XX:ErrorFile=<path> moves and renames the file. A JVM started
+  with an ErrorFile name that does not contain hs_err_pid is not seen; add that
+  name to selection on hosts that set it.
+references:
+  - https://www.cisa.gov/news-events/alerts/2026/11/17/critical-java-vulnerability-requires-immediate-patching
+  - https://www.oracle.com/security-alerts/cspunov2026.html
+author: det-eng
+date: 2026/11/18
+tags:
+  - attack.initial-access
+  - attack.t1190
+  - attack.impact
+  - attack.t1499.004
+  - cve.2026-114938
+logsource:
+  product: linux
+  category: file_event
+detection:
+  selection:
+    TargetFilename|contains: '/hs_err_pid'
+    TargetFilename|endswith: '.log'
+    EventType: create
+  condition: selection
+falsepositives:
+  - Ordinary JVM crashes (native library defects, faulty hardware). On servers
+    these are rare; on developer workstations and test hosts they are routine.
+    Baseline per host role before alerting.
+level: medium

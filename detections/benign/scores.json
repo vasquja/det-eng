@@ -543,6 +543,16 @@
         "k8s-audit-human-operators": 7
       }
     },
+    "T1190/linux_jvm_fatal_error_log_create.yml": {
+      "actors": {},
+      "distinct_actors": 0,
+      "events": 1501,
+      "hits": 0,
+      "rate_per_10k": 0.0,
+      "slices": {
+        "linux-k8s-node-file-events": 0
+      }
+    },
     "T1199/gcp_workforce_pool_provider_no_attribute_condition.yml": {
       "actors": {
         "platform.alder@example.com": 2
