@@ -48,6 +48,10 @@ Rows (one for each dataset and for each pair; no row holds a value of a record):
                         the dataset's sha256 changed, a defect it cites is not
                         listed, or it is redundant): the default verdict applies
   EXCLUDED <rule> on <id>     a dataset that SOURCES.json leaves out, with its why
+  BENIGN-VIEW <rule> on <id>  the benign view (roadmap item R3c): a hit of the rule on
+                        a dataset of its log source with no technique in common (no
+                        pair above), with the distinct events of the hits; triage for a
+                        human, never a verdict and never a budget
   UNAVAILABLE <id>      not in the cache and no download (also a ::warning); also
                         the LICENSE or syscall_64.tbl of an online run. Each step of
                         a request waits at most 15 s, and the network work of a run
@@ -56,6 +60,16 @@ Rows (one for each dataset and for each pair; no row holds a value of a record):
   ERROR ...             a structural fault (exit 2). The Summary line then ends with
                         "; N error(s)", and the step summary (--markdown) gives the
                         ERROR lines above the rows
+
+The benign view. After the pairs, each rule is scored on each dataset that was read,
+of its log source, where the rule and the dataset have no technique in common and no
+sound `fire` declaration makes a pair: a shadow benign slice. A pair with hits gives
+a BENIGN-VIEW row; a pair with no hit gives no row. The line "Benign view: ..." before
+the Summary line counts the pairs, the hit pairs and the distinct events (an event of
+a rule that an earlier dataset already gave is counted one time). No mode fails on a
+row of the view, and the gate never reads or writes detections/benign/ (the budgets
+of score_benign.py): a hit is an item for a human to triage. The datasets are unique
+by sha256 (the lint refuses two entries of the same bytes).
 
 Declarations are in detections/external/expectations.json (a human decision; the
 file is not content for the merge policy). Each one names a rule, a dataset id,
@@ -73,7 +87,7 @@ Exit codes:
   0  shadow mode (the default): no verdict fails the run.
   1  --enforce only: a MISS without a declaration, a STALE declaration, a declared
      quiet that fired, an n/a that fired, a known-miss that fires, or a declared
-     fire that missed.
+     fire that missed. Never a BENIGN-VIEW row.
   2  in every mode, a structural fault: a malformed SOURCES.json, expectations.json
      or syscall table, a declaration for a rule or a dataset that does not exist, a
      HASH MISMATCH (also of a cached file, which is deleted), a record count that
@@ -289,6 +303,10 @@ class Report:
         self.datasets, self.pairs, self.excluded, self.unavailable = [], [], [], []
         self.drafts = []
         self.failing = 0        # verdicts that fail --enforce
+        self.benign = []        # the BENIGN-VIEW hit pairs (R3c): triage, never a verdict
+        self.benign_counts = {"pairs": 0, "rules": 0, "datasets": 0, "hit_pairs": 0,
+                              "distinct_events": 0}
+        self.broken = set()     # rules that did not compile or run in the benign view
 
     def row(self, kind, text, fails=False):
         self.rows.append((kind, text))
@@ -312,7 +330,7 @@ class Report:
         healthy run's line does not change)."""
         return summary + (f"; {len(self.errors)} error(s)" if self.errors else "")
 
-    def write(self, summary, meta, code):
+    def write(self, summary, meta, code, benign=None):
         args = self.args
         if args.markdown:
             mode = "enforce" if args.enforce else "shadow"
@@ -323,6 +341,7 @@ class Report:
                 fh.write(f"## External records ({xr.REPOSITORY}, {mode})\n\n"
                          f"{summary.replace('|', '/')}\n\n"
                          + (f"```text\n{errors}```\n\n" if errors else "")
+                         + (f"{benign}\n\n" if benign else "")
                          + "Rows hold dataset ids, sha256 values, counts and the names of rule "
                          "items, never a value of a record.\n\n"
                          f"<details><summary>{len(self.rows)} row(s)</summary>\n\n"
@@ -332,6 +351,7 @@ class Report:
                 json.dump({"schema": 1, **meta, "mode": "enforce" if args.enforce else "shadow",
                            "datasets": self.datasets, "pairs": self.pairs,
                            "excluded": self.excluded, "unavailable": self.unavailable,
+                           "benign_view": self.benign, "benign_view_counts": self.benign_counts,
                            "errors": self.errors, "summary": summary, "exit": code},
                           fh, indent=2, sort_keys=True)
                 fh.write("\n")
@@ -649,6 +669,93 @@ def evaluate(report, ds, routed, rules, decls, stale, tables):
         report.pairs.append(entry)
 
 
+def event_key(event):
+    """The canonical text of one event (sorted keys, no blanks): two records with the
+    same fields and values are one event of the benign view. In memory only: no row
+    and no report holds it."""
+    return json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def benign_view(report, read, rules, decls, stale, tables):
+    """Roadmap item R3c: each rule on each dataset that was read, of its log source,
+    where the pair has no technique in common and no sound `fire` declaration (the
+    pairs that evaluate() leaves out). A hit is a BENIGN-VIEW row for a human to
+    triage: it never fails a run, also with --enforce, and it is never a budget (this
+    code reads and writes no file of detections/benign/).
+
+    Deduplication. By sha256: SOURCES.json lists each content one time (the lint
+    refuses two entries of the same bytes), so each file is scored one time. By event:
+    a row counts the distinct events of its hits (event_key()). Across datasets: an
+    event that the rule hit on an earlier dataset (by id) is not counted again in the
+    distinct events of the Summary; the row says how many of its events were counted
+    before."""
+    seen = {}                                   # rule key -> event keys already counted
+    scored = set()                              # (rule, dataset) pairs with records
+    for ds, routed in read:
+        for rule in rules:
+            if relation(rule, ds) is not None:
+                continue                        # a pair of evaluate(): reported there
+            d = decls.get((rule.key, ds["id"]))
+            if d and d["expect"] == "fire" and (rule.key, ds["id"]) not in stale:
+                continue                        # a declared fire: reported by evaluate()
+            records = routed.get(rule.logsource, [])
+            table = tables.get((ds["id"], rule.logsource)) if records else None
+            if records and (ds["id"], rule.logsource) not in tables:
+                try:
+                    table = tables[(ds["id"], rule.logsource)] = \
+                        sigma_eval.EventTable([r.event for r in records])
+                except Exception as e:      # noqa: BLE001 (a backstop, as in evaluate())
+                    tables[(ds["id"], rule.logsource)] = None
+                    report.error(f"{ds['id']}: the {rule.source_name} records cannot go into "
+                                 f"one table ({type(e).__name__}); the loader must refuse such "
+                                 "a record by its line (a fault of the gate)")
+            if table is None or rule.key in report.broken:
+                continue
+            try:
+                hits = table.hit_indices(rule.sql())
+            except Exception as e:      # noqa: BLE001 (a rule that does not compile or run)
+                report.broken.add(rule.key)
+                report.error(f"{rule.key}: the rule does not compile or run "
+                             f"({type(e).__name__}: {e})")
+                continue
+            scored.add((rule.key, ds["id"]))
+            if not hits:
+                continue
+            wheres = [r.where for r in records]
+            indices = sorted({i for hit in hits for i in hit})
+            keys = {event_key(records[i].event) for i in indices}
+            before = seen.setdefault(rule.key, set())
+            new = keys - before
+            before |= new
+            lines = ", ".join(wheres[i] for i in indices[:5]) + (", ..." if len(indices) > 5
+                                                                  else "")
+            counted = (f"{len(hits)} alert(s), {len(indices)} distinct evidence record(s) of "
+                       if rule.correlation else f"{len(indices)} of ") + _records(len(records))
+            earlier = (f", {len(keys) - len(new)} counted on an earlier dataset"
+                       if len(new) < len(keys) else "")
+            techniques = ", ".join(ds["techniques"])
+            report.row("benign-view", f"BENIGN-VIEW {rule.key} on {ds['id']}  {counted} "
+                       f"({len(keys)} distinct event(s){earlier}); evidence {lines}  "
+                       f"[another technique: {techniques}; triage, not a budget]")
+            report.benign.append({
+                "rule": rule.key, "dataset": ds["id"], "techniques": list(ds["techniques"]),
+                "records": len(records), "hits": len(indices), "alerts": len(hits),
+                "distinct_events": len(keys), "new_events": len(new),
+                "evidence": [wheres[i] for i in indices]})
+    report.benign_counts = {
+        "pairs": len(scored), "rules": len({r for r, _ in scored}),
+        "datasets": len({d for _, d in scored}), "hit_pairs": len(report.benign),
+        "distinct_events": sum(len(v) for v in seen.values())}
+
+
+def benign_line(report):
+    c = report.benign_counts
+    return (f"Benign view: {c['pairs']} pair(s) of {c['rules']} rule(s) on {c['datasets']} "
+            f"dataset(s) of another technique: {c['hit_pairs']} hit pair(s), "
+            f"{c['distinct_events']} distinct event(s) (each counted one time for its rule); "
+            "triage, not a budget")
+
+
 def draft(rule, ds, near, total):
     facts = f"0 of {total} record(s); {nearest_text(near)}"
     return {"rule": rule.key, "dataset": ds["id"], "expect": "TODO",
@@ -734,16 +841,17 @@ def run(args):
                     "origins; only files in the cache are read")
     else:
         verify_origins(report, sources, table_doc, cache, deadline)
-    tables, read = {}, 0
+    tables, read = {}, []
     chosen.sort(key=lambda r: r.key)
     for ds in sorted(sources["datasets"], key=lambda d: d["id"]):
         routed = read_one(report, ds, sources["commit"], cache, args.offline, syscalls,
                           deadline)
         if routed is None:
             continue
-        read += 1
+        read.append((ds, routed))
         evaluate(report, ds, routed, chosen, decls, stale, tables)
     excluded_rows(report, sources, chosen)
+    benign_view(report, read, chosen, decls, stale, tables)
     if not read and not report.errors:
         report.error("no dataset was read, so the run checked nothing (every dataset is "
                      "UNAVAILABLE)")
@@ -770,7 +878,9 @@ def run(args):
     else:
         code = 0
     summary = report.summary_line(summary)
-    report.write(summary, meta, code)
+    benign = benign_line(report)
+    report.write(summary, meta, code, benign)
+    print(benign)
     print(summary)
     return code
 
@@ -824,7 +934,8 @@ def run_draft(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Run each rule on the pinned splunk/attack_data datasets of its "
-                    "technique (shadow by default).")
+                    "technique, and on the other datasets of its log source as a benign view "
+                    "(shadow by default).")
     ap.add_argument("--lint", action="store_true",
                     help="offline: check SOURCES.json, expectations.json and the syscall "
                          "table only")

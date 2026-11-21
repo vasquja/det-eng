@@ -148,9 +148,11 @@ name: detection-quality
 #                      technique, pinned by a full commit and a sha256 in
 #                      detections/external/SOURCES.json (detections/
 #                      check_external_records.py; detections/README.md, "External
-#                      records"). A verdict (a MISS, a declaration that does not hold)
-#                      never fails this job; a structural fault does (exit 2). Not a
-#                      required check: roadmap item R3b makes it --enforce.
+#                      records"), and on the other pinned datasets of its log source
+#                      (the benign view, R3c: a BENIGN-VIEW row is triage, never a
+#                      verdict or a budget). A verdict (a MISS, a declaration that does
+#                      not hold) never fails this job; a structural fault does (exit
+#                      2). Not a required check: roadmap item R3b makes it --enforce.
 #
 # No paths: filter on pull_request, so these checks ALWAYS report on a PR. None of
 # them is a required check in the main ruleset yet, and GitHub's native auto-merge
@@ -1141,9 +1143,11 @@ jobs:
 
   external-records:
     # SHADOW (roadmap item R3). Each rule on the datasets of splunk/attack_data of its
-    # technique (detections/README.md, "External records"). The datasets are pinned by
-    # a full commit and a sha256 in detections/external/SOURCES.json. No verdict fails
-    # this job: a MISS is a row of the report. A structural fault fails it (exit 2): a
+    # technique (detections/README.md, "External records"), and on the other datasets
+    # of its log source (the benign view, R3c: a BENIGN-VIEW row in no mode fails, and
+    # the job reads and writes no file of detections/benign/). The datasets are pinned
+    # by a full commit and a sha256 in detections/external/SOURCES.json. No verdict
+    # fails this job: a MISS is a row of the report. A structural fault fails it (exit 2): a
     # malformed SOURCES.json or expectations.json, a HASH MISMATCH, a record count or a
     # yml at the commit that does not agree with the pin, a line that is not a record of
     # its format, or a run that read no dataset. The job downloads the files on each run

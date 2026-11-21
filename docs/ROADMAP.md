@@ -57,7 +57,7 @@ The order matters. Tests for the gates come before each change to the gates.
 | R7 | **Representation variants in the oracle** (design 4.7). Run each case as compact JSON, sorted JSON, a multi-valued list model, case-sensitive `LIKE` and RE2. Correct the two GCP rules that lose their hit under compact JSON. Write `detections/SEMANTICS.md`. | done | R2 | A check fails on a new divergence between variants. The known losses are listed as expected, each with a reason. Two rules lose their hit under compact JSON today: `T1199/gcp_workforce_principalset_privileged_binding.yml` and `T1098.001/gcp_workload_identity_federation_sa_binding.yml`. This item records both in `detections/RULE_DEFECTS.md` and corrects them. Done: #76 added the check `detections/check_variants.py` (the job `representation-variants` of `detection-quality.yml`) and its expected list `detections/variants/expected.json`, in which each known loss has a reason; it recorded the two compact-JSON losses in `detections/RULE_DEFECTS.md` (entry C17, closed: both rules are corrected), and it wrote `detections/SEMANTICS.md`. On `main` at `3d265bc` the run 43722669388 of `detection-quality.yml` passed, with the job `representation-variants`. |
 | R3 | **External records** (design 4.3). Records that the agent did not write, from `splunk/attack_data` (Apache-2.0), pinned by hash. A same-technique record must fire the rule unless a protected file says why not. | done | R2 | The check runs in CI in shadow mode and reports each rule's result on each same-technique dataset. The first real-record miss has a defect entry. The item is `done` when the job `external-records` is green on `main`, that defect entry is merged, and `gatelib.py --gaps` lists no gap that names R3 (see the note for R3 below). Done: the defect entry is C21 of `detections/RULE_DEFECTS.md` (#93). On `main` at `c714d30` (the merge of #93) the job `external-records` passed in shadow mode (detection-quality run 44581577886), and `gatelib.py --gaps` lists no gap that names R3. |
 | R3b | **External records are enforced** (design 4.3). After a green shadow period, the job `external-records` runs `--enforce` and is a required check. `SOURCES.json` pins the attack record of each dataset, and a FIRE must come from that record and not from a benign twin of the dataset (the FIC dataset of T1098.001 holds one). Item 1 of the definition of done (`AGENTS.md`, "Fires") names the same-technique external records. A pair that was read on the base branch and is `NOT READ` on the head fails (a change of the log source of a rule hides a `MISS`), and the online run checks the sha256 and the yml of each `excluded` entry too. | not started | R3 | The job runs `--enforce` and is in the ruleset. A hit on a record that is not a pinned attack record is not a FIRE: the known-gap test `ext-fire-on-another-record` is a rejection test. |
-| R3c | **A benign view of the external records** (design 4.3). Each rule is scored, as a shadow benign slice, on every dataset of its log source and not only on the datasets of its technique: also on the files that no yml names, deduplicated by sha256 and by event (a file can hold each event two times). A hit is a triage item for a human, never a budget. | not started | R3 | The report gives a row for each hit of a rule on a dataset of another technique. It never changes `detections/benign/scores.json` or `budgets.json`. |
+| R3c | **A benign view of the external records** (design 4.3). Each rule is scored, as a shadow benign slice, on every dataset of its log source and not only on the datasets of its technique: also on the files that no yml names, deduplicated by sha256 and by event (a file can hold each event two times). A hit is a triage item for a human, never a budget. | in progress | R3 | The report gives a row for each hit of a rule on a dataset of another technique. It never changes `detections/benign/scores.json` or `budgets.json`. PR-1 gives the view on the pinned datasets (see the note for R3c below); the files that no yml names wait for the owner's pins (section 4). |
 | R4 | **Harvest the captures of CI** (design 4.4). The lab validators write the records that the kernel or the API server produced. A scheduled job commits them as evidence. | not started | R2, T8 | A Linux or Kubernetes rule has a committed captured positive that the agent did not write by hand. |
 | R5 | **Provenance tiers** (design 4.5). Each case and fixture says where it came from. The coverage report shows `proven-live`, `proven-recorded`, `proven-synthetic` and `claimed`. Stop calling a hand-written fixture "recorded". | not started | R3 | The coverage report does not call a cloud procedure Proven when its only evidence is a fixture that the agent wrote. |
 | R6 | **Mutation ratchet** (design 4.6). Each change to a rule is proven by its evidence: each change to the logic of a rule, undone alone, must change a verdict on a case, a fixture or a corpus record of the head (`detections/check_mutants.py`, a step of the job `sufficiency-ratchet`). | done | R2 | A pull request that adds a dead or over-broad item to a rule fails. The item is `done` when that step has run green on a pull request after this item is merged. Done: #82 merged on 2026-11-16 at 16:11 UTC (`dd494ef`). The step ran and passed in the last run of each of seven pull requests that merged after it (the last run of #83, which merged 9 s after #82, came before it): #84 (run 43905454885), #81 (43908450485), #85 (44004316610), #87 (44030089037), #86 (44041652805), #90 (44146874607) and #91 (44206998886). In each run it judged 0 changed rules, because no pull request after #82 changed a rule file (#81 changed only a sidecar). So CI has not yet shown the step fail on a real dead or over-broad item. The gate tests (`detections/tests/test_mutants.py`) show each rejection. |
@@ -345,6 +345,33 @@ Design 4.3 gives 39, 18, 12, 112 and 6; these numbers match none of these bases.
   datasets of a log source) come after it. Done on 2026-11-19: C21 merged with #93,
   and the job passed on `main` at `c714d30` (run 44581577886).
 
+Note for R3c. The benign view is a part of `detections/check_external_records.py`
+(`detections/README.md`, "External records", **Benign view**).
+
+- **PR-1.** After the pairs, the report scores each rule on each pinned dataset of its
+  log source that it has no pair with (no technique in common, no sound `fire`
+  declaration). Each hit pair is a `BENIGN-VIEW` row, with the distinct events of its
+  hits; the line `Benign view:` counts the pairs, the hit pairs and the distinct
+  events, each event one time for its rule across the datasets. No mode fails on a
+  row, and the gate does not read or write a file of `detections/benign/`
+  (`test_external.py`). The datasets are unique by sha256, because the lint of
+  `SOURCES.json` refuses two entries of the same bytes.
+- **The first run** (2026-11-21, the pin `4b19e4b6`): 174 pairs of 69 rules on 27
+  datasets; 3 hit pairs, 3 distinct events. All three are
+  `T1528/entra_illicit_oauth_consent_grant.yml` on the T1098.003 datasets
+  `azure_ad_admin_consent`, `azure_ad_bypass_admin_consent` and `azure_ad_spn_privesc`:
+  an `Add app role assignment to service principal` of a high-privilege application
+  permission (`Mail.Read`, `full_access_as_app`, `RoleManagement.ReadWrite.Directory`).
+  That is the procedure of the rule (TRR9017), recorded under another technique: a
+  true positive, not a false positive class. A `fire` declaration or an
+  `attack.t1098.003` tag would make each a pair; both are decisions of the owner.
+- **Waits for the owner.** The files that no yml names need pins in `SOURCES.json`
+  and a form of entry that the report accepts for them. The proposal is in
+  `detections/external/README.md`, "Files that no yml names": five CloudTrail files
+  (two T1537 rules fire on `T1485/decommissioned_buckets/cloudtrail`) and the eight
+  auditd files of the survey (no raw SYSCALL record in any of them). R3c is `done`
+  when the owner has decided on them and the report scores the pinned ones.
+
 ## 2. Throughput: many builders, no hand integration
 
 | ID | Item | Status | Needs | Acceptance check |
@@ -448,6 +475,7 @@ must not do them. The steps are in [`setup/`](setup/README.md).
 | Labels, the off switch, `null-safety` as a required check | `setup/repository-settings.md`, steps 1 to 5 | |
 | What 100 % coverage means | `setup/README.md`, "Decisions" | Blocks T7 |
 | Cloud sandbox accounts (optional) | `setup/cloud-sandbox.md` | Blocks the rest of R9 |
+| The pins of the files that no yml names (`SOURCES.json`, and the form of an entry whose yml does not name its file) | `detections/external/README.md`, "Files that no yml names"; the note for R3c | Blocks R3c |
 | The declarations of `detections/external/expectations.json`, one for each `MISS` of the external-records report: `known-miss` with a defect entry (C21), or `n/a` with its reason. The drafts are what `check_external_records.py --suggest` prints | `detections/external/README.md`, "expectations.json"; the note for R3 (PR-3) | Blocks R3b |
 
 ## 5. New detections
