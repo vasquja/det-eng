@@ -109,8 +109,52 @@ row), which is GPL-2.0 WITH Linux-syscall-note.
   did not write.
 
 A dataset is in scope when a yml names it, the yml names the folder technique of a
-rule, and the file is a log of the product of that rule. A file that no yml names is
-out of scope (roadmap item R3c).
+rule, and the file is a log of the product of that rule. The report also scores each
+rule on each pinned dataset of its log source of another technique (the benign view,
+roadmap item R3c; [`../README.md`](../README.md#external-records-splunkattack_data)).
+A file that no yml names has no entry: the report reads it only after the owner pins
+it (the next section).
+
+## Files that no yml names
+
+Roadmap item R3c scores each rule on the files that no yml names too, but such a file
+needs an entry in `SOURCES.json` first, and a new pin is a decision of the owner
+(`AGENTS.md`, "Boundaries"). This list is a proposal; it waits for the owner. It comes
+from the tree of `splunk/attack_data` at the pinned commit `4b19e4b6` (read on
+2026-11-21 with a blobless clone; the sha256 and the size are those of the Git LFS
+pointer, and the format and the records are what `--draft` found in the file):
+
+| Path under `datasets/attack_techniques/` | Size | sha256 | What `--draft` found |
+|------|-----:|--------|----------------------|
+| `T1485/decommissioned_buckets/cloudtrail.json` | 13365 | `ef07feb9a4350482e319a4bda9724fd36c452b0e7a19ef8c8dc7dfbf7e5fc38f` | `cloudtrail-json`, 8 records, each event two times |
+| `T1490/aws_bucket_version/cloudtrail.json` | 4394 | `1abe5a2bb8f10e54253ada63d4a6ecee62faf4969bb6df93181e5f1fa19ff8b6` | `cloudtrail-json`, 2 records, one event two times |
+| `T1556.006/aws_new_mfa_method_registered_for_user/cloudtrail.json` | 2025 | `3947a363443b869c10b890febe58c27a75bd1208b729a35b02e05eb328d97617` | `cloudtrail-json`, 2 records |
+| `T1621/aws_mfa_disabled/cloudtrail.json` | 1905 | `e2c27d7f359285c133610b966062534315ca9dddd9aa383172ace47a5da3f34a` | `cloudtrail-json`, 2 records |
+| `T1185/aws_concurrent_sessions_from_different_ips/cloudtrail.json` | 2068 | `cf948583b0a978481ca3033c2d095ff4793b16c697a6de100dec18271067fad3` | `cloudtrail-json`, 2 records |
+| `T1548.003/linux_auditd_sudoers_access/linux_path_sudoers.log` | 660 | `66ddf50daa9a4e2fab2548e98f7a82cc9bd3c78d04789f7e5afa1ba54cd66de8` | auditd PATH records in the form of `ausearch -i`: not raw |
+| `T1548.003/linux_audited_doas_conf/linux_audited_doas_conf.log` | 1563 | `99a60c16d268a57a2489ec6bba718aaf95694b29cb01beddd3e2ca71277571b9` | raw auditd, PATH records only: no SYSCALL record |
+| `T1098.004/linux_auditd_nopasswd/linux_path_ssh_config.log` | 227 | `8bba8bf433dc7a54aa26411092ecc6946e635fd282bffa63f36c2076246bba9c` | auditd PATH record, `ausearch -i` form: not raw |
+| `T1574.006/linux_auditd_preload_file/linux_path_preload.log` | 227 | `81fb829014c6a0a08024a304c9f25ae5380054b5060e3768ffeb31b664566d08` | auditd PATH record, `ausearch -i` form: not raw |
+| `T1053.003/linux_auditd_cron_file_audited/linux_path_cron.log` | 10247 | `eca54b2aecb6a55dd1b57437c99fe106d631e2fa7515a005893bdb2d66f96f63` | auditd PATH records, `ausearch -i` form: not raw |
+| `T1546.004/linux_auditd_unix_shell_mod_config/linux_path_profile_d.log` | 655 | `c232815151609ba6854ae5e90b08ee8bfb83cf2c75ea783ac28986f92b9d1cba` | auditd PATH records, `ausearch -i` form: not raw |
+| `T1569.002/linux_service_start/linux_service_start.log` | 4630 | `5c9707fa41038c245ad99e63f99e4b7a37dc07dbd2cd0850186b2e0b06d77533` | raw auditd, PROCTITLE records only: no SYSCALL record |
+| `T1053.006/linux_services_restart/linux_services_restart.log` | 3991 | `c7197302320faf7e2574f6683327793c13c652be665ba4487f88a6521a230b54` | raw auditd, PROCTITLE records only: no SYSCALL record |
+
+- The five CloudTrail files are native records. Each can be a dataset entry; its `yml`
+  is the yml of its directory, which does not name the file, so the entry needs a form
+  that the report accepts for a file that no yml names (today `check_yml()` refuses it).
+  That form is a change of the gate and of `SOURCES.json`: the owner decides both.
+  A probe at the pin found two rules that fire on `T1485/decommissioned_buckets/cloudtrail`:
+  `T1537/aws_resource_policy_made_public.yml` (lines 3 and 4, a public bucket policy) and
+  `T1537/aws_s3_block_public_access_disabled.yml` (lines 5 and 6). These are the
+  "bucket-decommission capture" of design 4.3. No rule fired on the other four.
+- The eight auditd files are the "8 auditd files that no yml names" of the R3 survey.
+  None holds a raw SYSCALL record, which is what the auditd rules read, so they go to
+  `excluded` with that reason, or stay out.
+- Not in the list: the other files that no yml names hold no native record of a log
+  source of the rules (Sysmon for Linux, OCSF of Amazon Security Lake, GitHub, Splunk
+  audit trails, Windows). The search was by path and file name: it found no unnamed
+  Azure, Kubernetes or GCP file.
 
 ## expectations.json
 
