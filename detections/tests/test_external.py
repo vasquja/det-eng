@@ -65,8 +65,9 @@ EXCLUDED = {"id": "T1537/planted_ocsf/asl_ocsf",
 SNAPSHOT_NEAR_MISS = "ebs-snapshot-shared-with-dr-account"
 # The benign view (R3c): two CloudTrail datasets of another technique, T1119, which no
 # rule has as its folder or a tag (the test checks it). Both hold the record of the
-# positive case of the snapshot rule: `twice` holds it two times (one event), `once`
-# holds the near-miss and then it (other bytes, and the same event as `twice`).
+# positive case of the snapshot rule: `twice` holds it two times (one event; the
+# second time with its keys in the reverse order), `once` holds the near-miss and then
+# it (other bytes, and the same event as `twice`).
 OTHER_TECHNIQUE = "T1119"
 BENIGN_SET = {
     "once": (f"datasets/attack_techniques/{OTHER_TECHNIQUE}/planted_other_once/cloudtrail.json",
@@ -1065,11 +1066,13 @@ class ExternalRecords(gatelib.StartedTogether):
 
     @classmethod
     def with_benign_view(cls, tree):
-        """The four constructed datasets and the two of BENIGN_SET; returns the entries."""
+        """The four constructed datasets and the two of BENIGN_SET; returns the entries.
+        The positive case holds one record (a FIRE 1/1 in the constructed set)."""
         positive = case(tree, "snapshot", SET["snapshot"][4])["events"]
         near = case(tree, "snapshot", SNAPSHOT_NEAR_MISS)["events"]
         return plant_set(tree, {**{k: body_of(tree, k) for k in SET},
-                                "once": jsonl(near + positive), "twice": jsonl(positive * 2)})
+                                "once": jsonl(near + positive),
+                                "twice": jsonl(positive + [dict(reversed(positive[0].items()))])})
 
     @classmethod
     def begin_benign_view(cls, tree):
