@@ -63,6 +63,17 @@ EXCLUDED = {"id": "T1537/planted_ocsf/asl_ocsf",
             "techniques": ["T1537"], "product": "aws",
             "why": "constructed by detections/tests: OCSF records, not CloudTrail records"}
 SNAPSHOT_NEAR_MISS = "ebs-snapshot-shared-with-dr-account"
+# The benign view (R3c): two CloudTrail datasets of another technique, T1119, which no
+# rule has as its folder or a tag (the test checks it). Both hold the record of the
+# positive case of the snapshot rule: `twice` holds it two times (one event), `once`
+# holds the near-miss and then it (other bytes, and the same event as `twice`).
+OTHER_TECHNIQUE = "T1119"
+BENIGN_SET = {
+    "once": (f"datasets/attack_techniques/{OTHER_TECHNIQUE}/planted_other_once/cloudtrail.json",
+             "cloudtrail-json", "aws:cloudtrail", OTHER_TECHNIQUE, SET["snapshot"][4]),
+    "twice": (f"datasets/attack_techniques/{OTHER_TECHNIQUE}/planted_other_twice/cloudtrail.json",
+              "cloudtrail-json", "aws:cloudtrail", OTHER_TECHNIQUE, SET["snapshot"][4]),
+}
 COPYFAIL_CVE = {"label": "CVE-2026-31431", "cves": ["CVE-2026-31431"],
                 "why": "constructed by detections/tests from the positive case of the rule"}
 YML = ("author: detections/tests (constructed; it holds no record of splunk/attack_data)\n"
@@ -132,7 +143,7 @@ def plant_set(tree, bodies, records=None, edit=None, describe=None):
     os.makedirs(cache, exist_ok=True)
     entries = {}
     for key, body in bodies.items():
-        path, fmt, sourcetype, technique, name = SET[key]
+        path, fmt, sourcetype, technique, name = SET[key] if key in SET else BENIGN_SET[key]
         description = (describe or {}).get(key, f"constructed from the case {name}"
                                            + (f" ({COPYFAIL_CVE['label']} privilege escalation)"
                                               if key == "copyfail" else ""))
@@ -754,7 +765,8 @@ class ExternalRecords(gatelib.StartedTogether):
     network, so every pinned dataset is UNAVAILABLE and the run must fail (exit 2): a
     run that read no dataset checked nothing. The runs `constructed` (the CI step)
     and `constructed_enforce` (the documented --enforce) accept the constructed set.
-    The first rejection is the CI step on a cached file of other bytes."""
+    The first rejection is the CI step on a cached file of other bytes. The runs
+    `benign_view*` add the two datasets of BENIGN_SET for the benign view (R3c)."""
 
     GATE = GATE
     PARTS = gatelib.DETECTIONS
@@ -764,7 +776,8 @@ class ExternalRecords(gatelib.StartedTogether):
             "unavailable_one_shadow", "not_a_record", "count_changed", "line_not_object",
             "not_utf8", "case_clash", "unstorable_value", "long_integer", "twice_envelope",
             "label_not_in_yml", "yml_technique", "twin", "twin_attack_only", "self_declared",
-            "self_declared_plain")
+            "self_declared_plain", "benign_view", "benign_view_enforce", "benign_view_declared",
+            "benign_view_stale")
     STEP = ("detection-quality.yml", "external-records", f"{GATE} --markdown")
 
     @classmethod
@@ -802,7 +815,9 @@ class ExternalRecords(gatelib.StartedTogether):
         related    rules outside T1552.007 with that tag, on the Kubernetes audit log
         other-product  rules of the folder of a set that read another product
         miss       the other T1537 rules of CloudTrail (the snapshot set)
-        excluded   the T1537 rules of AWS (the excluded entry)"""
+        excluded   the T1537 rules of AWS (the excluded entry)
+        other-cloudtrail  CloudTrail rules of another folder and without its tag than the
+                   snapshot set: only the benign view scores them on the constructed set"""
         facts = cls.facts()
         pick = {
             "not-read": lambda f: f["folder"] == SET["consent"][3]
@@ -817,6 +832,8 @@ class ExternalRecords(gatelib.StartedTogether):
             and f["path"] != RULES["snapshot"],
             "excluded": lambda f: f["folder"] in EXCLUDED["techniques"]
             and f["source"][0] == EXCLUDED["product"],
+            "other-cloudtrail": lambda f: f["source"] == SOURCE["snapshot"]
+            and SET["snapshot"][3] not in {f["folder"]} | f["techniques"],
         }[name]
         return sorted(key for key, f in facts.items() if pick(f))
 
@@ -1046,8 +1063,209 @@ class ExternalRecords(gatelib.StartedTogether):
         tree.replace(RULES["secret"], cls.SECRET_GET, "")
         return cls.start_enforce(tree, "secret")
 
+    @classmethod
+    def with_benign_view(cls, tree):
+        """The four constructed datasets and the two of BENIGN_SET; returns the entries."""
+        positive = case(tree, "snapshot", SET["snapshot"][4])["events"]
+        near = case(tree, "snapshot", SNAPSHOT_NEAR_MISS)["events"]
+        return plant_set(tree, {**{k: body_of(tree, k) for k in SET},
+                                "once": jsonl(near + positive), "twice": jsonl(positive * 2)})
+
+    @classmethod
+    def begin_benign_view(cls, tree):
+        cls.with_benign_view(tree)
+        return cls.start_gate(tree)
+
+    @classmethod
+    def begin_benign_view_enforce(cls, tree):
+        # The snapshot rule fires on both datasets of BENIGN_SET; a CloudTrail rule of
+        # another technique does not fire on them, nor on the snapshot set.
+        cls.with_benign_view(tree)
+        return tree.start(cls.GATE, "--enforce", "--offline", "--json", tree.out("report.json"),
+                          "--rule", RULES["snapshot"],
+                          "--rule", cls.facts()[cls.kind("other-cloudtrail")[0]]["path"])
+
+    @classmethod
+    def fire_on_once(cls, tree, entries, digest=None):
+        declare(tree, {"rule": rule_key(RULES["snapshot"]), "dataset": entries["once"]["id"],
+                       "expect": "fire", "why": "same procedure: planted by detections/tests",
+                       "rule_digest": digest or cls.rule_digests()[RULES["snapshot"]],
+                       "sha256": entries["once"]["sha256"]})
+
+    @classmethod
+    def begin_benign_view_declared(cls, tree):
+        # A sound fire declaration takes the pair (snapshot rule, once) out of the view.
+        cls.fire_on_once(tree, cls.with_benign_view(tree))
+        return tree.start(cls.GATE, "--enforce", "--offline", "--rule", RULES["snapshot"])
+
+    @classmethod
+    def begin_benign_view_stale(cls, tree):
+        # A stale fire declaration (another digest) excuses nothing: the pair stays in it.
+        cls.fire_on_once(tree, cls.with_benign_view(tree), digest="0" * 64)
+        return tree.start(cls.GATE, "--offline", "--rule", RULES["snapshot"])
+
     def id_of(self, key):
-        return re.escape(ds_id(SET[key][0]))
+        return re.escape(ds_id((SET.get(key) or BENIGN_SET[key])[0]))
+
+    def benign_row(self, key, counted, distinct, lines):
+        """The BENIGN-VIEW row of the snapshot rule on the dataset `key` of BENIGN_SET."""
+        return (rf"^BENIGN-VIEW {re.escape(rule_key(RULES['snapshot']))} on {self.id_of(key)}  "
+                rf"{re.escape(counted)} \({re.escape(distinct)}\); evidence {re.escape(lines)}  "
+                rf"\[another technique: {OTHER_TECHNIQUE}; triage, not a budget\]$")
+
+    def test_benign_view_technique_is_of_no_rule(self):
+        """The constructed datasets of the view are of a technique that no rule names (or
+        the snapshot rule would make a pair of evaluate() with them)."""
+        facts = self.facts()
+        self.assertTrue(facts)
+        for key, f in facts.items():
+            self.assertNotIn(OTHER_TECHNIQUE, {f["folder"]} | f["techniques"],
+                             f"{key} names {OTHER_TECHNIQUE} (detections/tests/README.md, Limits)")
+        self.assertEqual(facts[rule_key(RULES["snapshot"])]["source"], ("aws", "cloudtrail"))
+
+    def test_benign_view_reports_a_hit_on_another_technique(self):
+        """The CI step (shadow): a rule that fires on a dataset of another technique of
+        its log source gives a BENIGN-VIEW row, and the run passes. The event of the
+        dataset `twice` is one event two times; the dataset `once` holds the same event,
+        so the Summary counts it one time for the rule."""
+        tree, result = self.started("benign_view")
+        self.assert_accepts(result, r"^Summary: .*; 6 dataset\(s\) read, 0 unavailable; shadow: "
+                            r"\d+ verdict\(s\) would fail --enforce$")
+        self.assertRegex(result.output, re.compile(self.benign_row(
+            "once", "1 of 2 record(s)", "1 distinct event(s)", "line 2"), re.MULTILINE))
+        self.assertRegex(result.output, re.compile(self.benign_row(
+            "twice", "2 of 2 record(s)", "1 distinct event(s), 1 counted on an earlier dataset",
+            "line 1, line 2"), re.MULTILINE))
+        self.assertRegex(result.output, re.compile(
+            r"^Benign view: \d+ pair\(s\) of \d+ rule\(s\) on \d+ dataset\(s\) of another "
+            r"technique: \d+ hit pair\(s\), \d+ distinct event\(s\) \(each counted one time "
+            r"for its rule\); triage, not a budget\nSummary: ", re.MULTILINE))
+        # No BENIGN-VIEW row for a pair that evaluate() reports (same technique, related,
+        # other procedure, declared): each (rule, dataset) has one row at most.
+        pairs = re.findall(r"^(?:FIRE|MISS|RELATED|OTHER-PROCEDURE|NOT READ|QUIET|N/A|BENIGN-VIEW)"
+                           r"\s+(\S+) on (\S+?):?\s", result.output, re.MULTILINE)
+        self.assertEqual(len(pairs), len(set(pairs)), result.describe())
+        # The step summary holds the rows and the line of the view; the JSON report lists
+        # each hit pair, with lines and counts and no value of a record.
+        with open(tree.out("github/github_step_summary"), encoding="utf-8") as fh:
+            summary = fh.read()
+        self.assertRegex(summary, re.compile(r"^Benign view: .*; triage, not a budget$",
+                                             re.MULTILINE))
+        self.assertRegex(summary, re.compile(self.benign_row(
+            "once", "1 of 2 record(s)", "1 distinct event(s)", "line 2"), re.MULTILINE))
+        with open(tree.out("runner-temp/external-records.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        entry = next(e for e in report["benign_view"]
+                     if e["rule"] == rule_key(RULES["snapshot"])
+                     and e["dataset"] == ds_id(BENIGN_SET["twice"][0]))
+        self.assertEqual(entry, {"rule": rule_key(RULES["snapshot"]),
+                                 "dataset": ds_id(BENIGN_SET["twice"][0]),
+                                 "techniques": [OTHER_TECHNIQUE], "records": 2, "hits": 2,
+                                 "alerts": 2, "distinct_events": 1, "new_events": 0,
+                                 "evidence": ["line 1", "line 2"]})
+        self.assertEqual(report["benign_view_counts"]["hit_pairs"], len(report["benign_view"]))
+        self.assertEqual(report["exit"], 0)
+        # The view is not a pair of the report: the same-technique rows, the counts of the
+        # Summary and the rows of the four datasets are those of the run without it.
+        _, plain = self.started("constructed")
+        def kept(output):
+            return [line for line in output.split("\n") if line
+                    and not line.startswith(("BENIGN-VIEW ", "Benign view: "))
+                    and OTHER_TECHNIQUE + "/" not in line.split("Summary:")[0]]
+        def counts(output):
+            return re.sub(r"\d+ dataset\(s\) read", "N dataset(s) read", output)
+        self.assertEqual(counts("\n".join(kept(result.output))),
+                         counts("\n".join(kept(plain.output))))
+
+    def test_benign_view_never_fails_enforce(self):
+        """--enforce: the rows of the view fail nothing (exit 0), a rule of the log source
+        that does not fire gives no row (it is scored on the three CloudTrail sets), and
+        the Summary of the view counts the one event of the two datasets one time."""
+        tree, result = self.started("benign_view_enforce")
+        self.assertTrue(self.kind("other-cloudtrail"), "no CloudTrail rule of another technique "
+                        "(detections/tests/README.md, Limits)")
+        self.assert_accepts(result, r"enforce: 0 verdict\(s\) fail$")
+        self.assertRegex(result.output, re.compile(self.benign_row(
+            "once", "1 of 2 record(s)", "1 distinct event(s)", "line 2"), re.MULTILINE))
+        self.assertRegex(result.output, re.compile(self.benign_row(
+            "twice", "2 of 2 record(s)", "1 distinct event(s), 1 counted on an earlier dataset",
+            "line 1, line 2"), re.MULTILINE))
+        self.assertEqual(len(re.findall(r"^BENIGN-VIEW ", result.output, re.MULTILINE)), 2,
+                         result.describe())
+        self.assertRegex(result.output, re.compile(
+            r"^Benign view: 5 pair\(s\) of 2 rule\(s\) on 3 dataset\(s\) of another technique: "
+            r"2 hit pair\(s\), 1 distinct event\(s\) \(each counted one time for its rule\); "
+            r"triage, not a budget$", re.MULTILINE))
+        with open(tree.out("report.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual(report["benign_view_counts"], {"pairs": 5, "rules": 2, "datasets": 3,
+                                                        "hit_pairs": 2, "distinct_events": 1})
+        self.assertEqual([e["new_events"] for e in report["benign_view"]], [1, 0])
+
+    def test_benign_view_leaves_out_a_declared_pair(self):
+        """A pair with a sound fire declaration is a pair of evaluate() (a FIRE row), not
+        a row of the view; a stale one excuses nothing, and the pair is in the view."""
+        _, result = self.started("benign_view_declared")
+        self.assert_accepts(result, r"enforce: 0 verdict\(s\) fail$")
+        self.assertRegex(result.output, re.compile(
+            rf"^FIRE      {re.escape(rule_key(RULES['snapshot']))} on {self.id_of('once')}  1/2 "
+            r"record\(s\) \(line 2\)  \[declared fire\]$", re.MULTILINE))
+        self.assertNotRegex(result.output, re.compile(rf"^BENIGN-VIEW \S+ on {self.id_of('once')} ",
+                                                      re.MULTILINE))
+        # The event of `twice` is not counted on an earlier dataset of the view now.
+        self.assertRegex(result.output, re.compile(self.benign_row(
+            "twice", "2 of 2 record(s)", "1 distinct event(s)", "line 1, line 2"), re.MULTILINE))
+        self.assertRegex(result.output, re.compile(
+            r"^Benign view: 1 pair\(s\) of 1 rule\(s\) on 1 dataset\(s\) of another technique: "
+            r"1 hit pair\(s\), 1 distinct event\(s\) ", re.MULTILINE))
+        _, stale = self.started("benign_view_stale")
+        self.assert_accepts(stale, r"shadow: \d+ verdict\(s\) would fail --enforce$")
+        self.assertRegex(stale.output, re.compile(rf"^STALE     {re.escape(rule_key(RULES['snapshot']))}"
+                                                  rf" on {self.id_of('once')}: ", re.MULTILINE))
+        self.assertRegex(stale.output, re.compile(self.benign_row(
+            "once", "1 of 2 record(s)", "1 distinct event(s)", "line 2"), re.MULTILINE))
+        self.assertNotRegex(stale.output, re.compile(
+            rf"^FIRE      \S+ on {self.id_of('once')} ", re.MULTILINE))
+
+    # A run of the report that records each file that it opens (an audit hook), and the
+    # sha256 of the two files of the benign budgets before and after it.
+    BUDGET_FILES = ("detections/benign/scores.json", "detections/benign/budgets.json")
+    OPENS = ("import contextlib, hashlib, io, os\n"
+             "def digest(p):\n"
+             "    with open(p, 'rb') as fh:\n"
+             "        return hashlib.sha256(fh.read()).hexdigest()\n"
+             "files, report = ARGS[0]\n"
+             "before = {p: digest(p) for p in files}\n"
+             "opened, recording = [], [True]\n"
+             "def hook(event, args):\n"
+             "    if recording[0] and event == 'open' and args and isinstance(args[0], str):\n"
+             "        opened.append(os.path.abspath(args[0]))\n"
+             "sys.addaudithook(hook)\n"
+             "out = io.StringIO()\n"
+             "with contextlib.redirect_stdout(out):\n"
+             "    code = cer.main(['--enforce', '--offline', '--json', report])\n"
+             "recording[0] = False\n"
+             "rows = [l for l in out.getvalue().split('\\n') if l.startswith('BENIGN-VIEW ')]\n"
+             "print(json.dumps({'code': code, 'rows': len(rows), 'opened': opened,\n"
+             "                  'before': before, 'after': {p: digest(p) for p in files}}))\n")
+
+    def test_benign_view_never_reads_or_writes_a_budget(self):
+        """The view is never a budget: a run with hits of the view does not open
+        detections/benign/scores.json or budgets.json (or another file of
+        detections/benign/), and the two files keep their bytes."""
+        tree = self.tree(*self.PARTS)
+        self.with_benign_view(tree)
+        got = probe(tree, self.OPENS, [list(self.BUDGET_FILES), tree.out("report.json")])
+        self.assertGreaterEqual(got["rows"], 2)
+        self.assertIn(got["code"], (0, 1))      # --enforce: the MISS rows of the tree fail
+        benign = os.path.realpath(tree.path("detections/benign"))
+        opened = [os.path.realpath(p) for p in got["opened"]]
+        # The hook saw the opens of the gate (not vacuous).
+        self.assertIn(os.path.realpath(tree.path(SOURCES)), opened)
+        self.assertEqual([p for p in opened if p == benign or p.startswith(benign + os.sep)], [])
+        self.assertEqual(got["before"], got["after"])
+        for rel in self.BUDGET_FILES:
+            self.assertTrue(tree.exists(rel), rel)
 
     def test_control_the_real_pins_without_network_read_nothing(self):
         """The CI step on the unmodified copy: no cache and no network, so each dataset
@@ -1124,7 +1342,7 @@ class ExternalRecords(gatelib.StartedTogether):
         # The step summary holds each row of the console, and no other.
         rows = [line for line in result.output.split("\n")
                 if re.match(r"(DATASET|FIRE|MISS|NOT READ|RELATED|OTHER-PROCEDURE|EXCLUDED"
-                            r"|UNAVAILABLE) ", line)]
+                            r"|UNAVAILABLE|BENIGN-VIEW) ", line)]
         with open(tree.out("github/github_step_summary"), encoding="utf-8") as fh:
             summary = fh.read()
         self.assertIn("## External records (splunk/attack_data, shadow)", summary)

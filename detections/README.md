@@ -2357,8 +2357,9 @@ and the items of the rule that it fails), `RELATED`, `OTHER-PROCEDURE`, `NOT REA
 (the dataset holds no record of the rule's log source), `QUIET`, `N/A`,
 `KNOWN-MISS <ID>`, `DECLARED QUIET, FIRED`, `STALE N/A`, `KNOWN-MISS FIRES`, `STALE`
 (a declaration that no longer applies), `EXCLUDED` (a dataset that `SOURCES.json`
-leaves out, with the reason) and `UNAVAILABLE` (a dataset, or in an online run the
-LICENSE or the syscall table, that could not be read). A correlation rule gives its alerts
+leaves out, with the reason), `BENIGN-VIEW` (a hit of the benign view, below) and
+`UNAVAILABLE` (a dataset, or in an online run the LICENSE or the syscall table, that
+could not be read). A correlation rule gives its alerts
 and the distinct records that are their evidence. The last line is the `Summary`. No
 row holds a value of a record: rows name datasets, rules, lines and the items of a
 rule. `--explain` also prints, on the console only, the explanation of
@@ -2431,8 +2432,34 @@ evidence names the dataset id and its sha256) and propose a `known-miss` declara
 When the dataset shows another procedure or does not record what the rule reads,
 propose an `n/a` declaration. Never edit `detections/external/` to make a rule pass.
 
-The view of every dataset of a log source as a benign sample (a rule that fires on a
-dataset of another technique) is not part of this gate; roadmap item R3c adds it.
+**Benign view** (roadmap item R3c). After the pairs, the gate scores each rule, as a
+shadow benign slice, on each dataset that it read and whose records go to the log
+source of the rule, when the rule and the dataset have no technique in common (no
+pair above) and no sound `fire` declaration makes them a pair. Each hit pair gives
+one row:
+
+```text
+BENIGN-VIEW T1528/entra_illicit_oauth_consent_grant.yml on T1098.003/azure_ad_spn_privesc/azure_ad_spn_privesc  1 of 1 record(s) (1 distinct event(s)); evidence line 1  [another technique: T1098.003; triage, not a budget]
+```
+
+A pair with no hit gives no row. The line `Benign view: P pair(s) of R rule(s) on D
+dataset(s) of another technique: H hit pair(s), E distinct event(s)` comes before the
+`Summary` line, and the JSON report (`--json`) holds the list `benign_view` (one entry
+for each hit pair: lines and counts, no value of a record) and its counts
+`benign_view_counts`. The datasets are unique by sha256: `SOURCES.json` refuses two
+entries of the same bytes. Two records with the same fields and values are one event
+(the JSON text of the event with sorted keys): a row gives the distinct events of its
+hits, because a file can hold each event two times. An event that the rule hit on an
+earlier dataset (by id) is not counted again in `E`, and the row says how many of its
+events an earlier dataset gave.
+
+A row of the view is an item for a human to triage: a false positive class of the
+rule, or attack data of another technique that the rule fires on with reason. It
+never fails a run, also with `--enforce`, and it is never a budget: the gate does not
+read or write `benign/scores.json`, `benign/budgets.json` or any other file of
+`benign/` (`test_external.py` proves both). The view scores only the pinned datasets.
+The files that no yml names need pins first, which is a decision of the owner
+([`external/README.md`](external/README.md#files-that-no-yml-names)).
 
 ## Status
 
